@@ -263,32 +263,31 @@ def sync_open_positions(live_api_key, live_api_secret, live_base_url, demo_api_k
             qty_to_change_str = format_decimal_for_api(abs(qty_to_change_decimal), QTY_PRECISION)
             order_side_for_change = live_side if qty_to_change_decimal > 0 else ("Buy" if live_side == "Sell" else "Sell")
 
-            calculated_sl_str = None
-            if qty_to_change_decimal > 0:
-                log_and_print(f"Friss piaci ár lekérése {live_symbol} számára az SL számításhoz...")
-                current_market_price = get_market_price(live_symbol, demo_base_url)
+            # SL újraszámolás az átlagos nyitóárhoz képest!
+            avg_entry_price = quantize_value(live_pos.get("entryPrice", "0"), PRICE_PRECISION)
+            log_and_print(f"Átlagos nyitóár: {avg_entry_price} - ehhez képest számoljuk az SL-t.")
 
-                if current_market_price and current_market_price > Decimal(0):
-                    log_and_print(f"A jelenlegi piaci ár: {current_market_price}")
-                    sl_price_decimal = calculate_sl_price(
-                        entry_price=current_market_price,
-                        quantity=target_demo_qty_decimal,
-                        side=order_side_for_change,
-                        loss_usd=DEFAULT_SL_LOSS_USD,
-                        price_precision=PRICE_PRECISION
-                    )
-                    if sl_price_decimal:
-                        calculated_sl_str = format_decimal_for_api(sl_price_decimal, PRICE_PRECISION)
-                        log_and_print(f"Számított SL ({live_symbol} {order_side_for_change}): ${calculated_sl_str}")
-                    else:
-                        log_and_print(f"Figyelem: Nem sikerült SL-t számolni a {live_symbol} pozícióhoz.")
+            calculated_sl_str = None
+            if avg_entry_price > Decimal(0):
+                sl_price_decimal = calculate_sl_price(
+                    entry_price=avg_entry_price,
+                    quantity=target_demo_qty_decimal,
+                    side=order_side_for_change,
+                    loss_usd=DEFAULT_SL_LOSS_USD,
+                    price_precision=PRICE_PRECISION
+                )
+                if sl_price_decimal:
+                    calculated_sl_str = format_decimal_for_api(sl_price_decimal, PRICE_PRECISION)
+                    log_and_print(f"Számított SL ({live_symbol} {order_side_for_change}): ${calculated_sl_str}")
                 else:
-                    log_and_print(f"HIBA: Nem sikerült lekérni a friss piaci árat {live_symbol}-hoz, SL beállítása kihagyva.")
+                    log_and_print(f"Figyelem: Nem sikerült SL-t számolni a {live_symbol} pozícióhoz.")
+            else:
+                log_and_print(f"HIBA: Nincs átlagos nyitóár {live_symbol}-hoz, SL beállítása kihagyva.")
 
             order_id = place_order(
                 demo_api_key, demo_api_secret, demo_base_url,
                 live_symbol, order_side_for_change, qty_to_change_str,
-                order_type="Market",  # Csak piaci megbízás engedélyezett
+                order_type="Market",
                 position_idx=live_pos_idx,
                 take_profit_str=live_tp_str,
                 stop_loss_str=calculated_sl_str,
@@ -358,4 +357,4 @@ def main():
         time.sleep(LOOP_INTERVAL_SECONDS)
 
 if __name__ == "__main__":
-    main() 
+    main()
