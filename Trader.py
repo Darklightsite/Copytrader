@@ -1,32 +1,16 @@
-import time
-import hmac
-import hashlib
-import requests
-import logging
 import configparser
-from urllib.parse import urlencode
+import time
+import requests
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
+import hmac
+from urllib.parse import urlencode
 
-# --- Naplózás beállítása ---
-LOG_FILENAME = "trade_copier.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename=LOG_FILENAME,
-    filemode='w'
-)
-
-def log_and_print(msg):
-    print(msg)
-    logging.info(msg)
+LOG_FILENAME = "copytrader.log"
 
 # --- Config betöltése ---
 config = configparser.ConfigParser()
+config.read("config.ini")
 try:
-    config.read("test.ini")
-    AUTO_CONFIRM = config.getboolean("settings", "AUTO_CONFIRM", fallback=False)
-    DEFAULT_SL_LOSS_USD = config.getfloat("settings", "DEFAULT_SL_LOSS_USD", fallback=100.0)
-    LOOP_INTERVAL_SECONDS = config.getint("settings", "LOOP_INTERVAL_SECONDS", fallback=60)
     API_KEY_LIVE = config.get("live", "API_KEY")
     API_SECRET_LIVE = config.get("live", "API_SECRET")
     API_KEY_DEMO = config.get("demo", "API_KEY")
@@ -34,15 +18,25 @@ try:
     QTY_PRECISION = config.getint("settings", "QTY_PRECISION", fallback=8)
     PRICE_PRECISION = config.getint("settings", "PRICE_PRECISION", fallback=2)
     COPY_MULTIPLIER = config.getfloat("settings", "COPY_MULTIPLIER", fallback=1.0)
-
+    DEFAULT_SL_LOSS_USD = config.getfloat("settings", "DEFAULT_SL_LOSS_USD", fallback=10)
+    LOOP_INTERVAL_SECONDS = config.getint("settings", "LOOP_INTERVAL_SECONDS", fallback=30)
+    AUTO_CONFIRM = config.getboolean("settings", "AUTO_CONFIRM", fallback=False)
 except Exception as e:
-    log_and_print(f"HIBA: Config betöltési hiba: {e}")
+    print(f"HIBA: Config betöltési hiba: {e}")
     exit(1)
 
 BASE_URL_LIVE = "https://api.bybit.com"
 BASE_URL_DEMO = "https://api-demo.bybit.com"
 
 MIN_QTY_THRESHOLD = Decimal('1e-' + str(QTY_PRECISION))
+
+def log_and_print(msg):
+    print(msg)
+    try:
+        with open(LOG_FILENAME, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
 
 def calculate_sl_price(entry_price, quantity, side, loss_usd, price_precision):
     """
@@ -54,26 +48,20 @@ def calculate_sl_price(entry_price, quantity, side, loss_usd, price_precision):
     try:
         loss_decimal = Decimal(str(loss_usd))
         price_precision_str = '1e-' + str(price_precision)
-        
         price_change = (loss_decimal / quantity).quantize(Decimal(price_precision_str), rounding=ROUND_DOWN)
-        
         if side == "Buy":
             sl_price = entry_price - price_change
         elif side == "Sell":
             sl_price = entry_price + price_change
         else:
             return None
-
         if sl_price <= Decimal(0):
             log_and_print(f"Figyelem: A számított SL ({sl_price}) nulla vagy negatív lenne, ezért kihagyva.")
             return None
-            
         return sl_price.quantize(Decimal(price_precision_str), rounding=ROUND_DOWN)
-        
     except Exception as e:
         log_and_print(f"HIBA: SL ár számítása során hiba történt: {e}")
         return None
-
 
 def quantize_value(value_str, precision_digits):
     """Egy stringként kapott számot Decimal-ként kvantál a megadott pontosságra."""
@@ -92,7 +80,6 @@ def quantize_value(value_str, precision_digits):
         except Exception:
             log_and_print(f"HIBA: Végső fallback kvantálás is sikertelen: '{value_str}'. 0-val tér vissza.")
             return Decimal(0)
-
 
 def format_decimal_for_api(decimal_value, precision_digits):
     """Decimal értéket stringgé formáz az API számára megfelelő pontossággal."""
@@ -158,36 +145,6 @@ def get_positions_from_account(api_key, api_secret, base_url, account_name="Isme
         log_and_print(f"HIBA: Pozíciók lekérése nem sikerült ({account_name} számla): {e}")
         return []
 
-def get_limit_orders_from_account(api_key, api_secret, base_url, account_name="Ismeretlen"):
-    endpoint = "/v5/order/realtime"
-    url = base_url + endpoint
-    timestamp = str(int(time.time() * 1000))
-    params = {"category": "linear", "settleCoin": "USDT", "orderFilter": "Order"}
-    query_string = urlencode(params)
-    sign = sign_request(api_key, api_secret, timestamp, "GET", endpoint, query_string)
-    headers = {
-        "X-BAPI-API-KEY": api_key, "X-BAPI-SIGN": sign,
-        "X-BAPI-TIMESTAMP": timestamp, "X-BAPI-RECV-WINDOW": "5000"
-    }
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        if data.get("retCode") == 0 and "result" in data and "list" in data["result"]:
-            return [
-                order for order in data["result"]["list"]
-                if order.get("orderType") == "Limit" and order.get("orderStatus") in ["New", "PartiallyFilled"]
-            ]
-        else:
-            log_and_print(f"Nem sikerült lekérni a nyitott megbízásokat ({account_name} számla): {data}")
-            return []
-    except requests.exceptions.RequestException as e:
-        log_and_print(f"HIBA: Nyitott megbízások lekérése ({account_name} számla) hálózati hiba: {e}")
-        return []
-    except Exception as e:
-        log_and_print(f"HIBA: Nyitott megbízások lekérése nem sikerült ({account_name} számla): {e}")
-        return []
-
 def get_market_price(symbol, base_url):
     url = f"{base_url}/v5/market/tickers?category=linear&symbol={symbol}"
     try:
@@ -206,27 +163,23 @@ def get_market_price(symbol, base_url):
     return None
 
 def place_order(api_key, api_secret, base_url, symbol, side, qty_str,
-                price_str=None, order_type="Limit", position_idx=0,
+                price_str=None, order_type="Market", position_idx=0,
                 take_profit_str=None, stop_loss_str=None,
                 tp_trigger_by_str=None, sl_trigger_by_str=None,
                 tpsl_mode_str=None):
+    # Csak piaci megbízás engedélyezett
+    if order_type != "Market":
+        log_and_print(f"Csak piaci megbízások engedélyezettek. ({symbol})")
+        return None
+
     endpoint = "/v5/order/create"
     url = base_url + endpoint
     timestamp = str(int(time.time() * 1000))
 
     body = {
-        "category": "linear", "symbol": symbol, "side": side, "orderType": order_type,
+        "category": "linear", "symbol": symbol, "side": side, "orderType": "Market",
         "qty": qty_str, "timeInForce": "GTC", "positionIdx": position_idx
     }
-
-    if order_type == "Limit":
-        if price_str is None:
-            log_and_print(f"HIBA: Limit order ({symbol}) leadásához kötelező ár megadása!")
-            return None
-        body["price"] = price_str
-    elif order_type != "Market":
-        log_and_print(f"HIBA: Ismeretlen order_type ({order_type}) a rendelés leadásakor: {symbol}")
-        return None
 
     if take_profit_str and quantize_value(take_profit_str, PRICE_PRECISION) > Decimal(0):
         body["takeProfit"] = take_profit_str
@@ -248,102 +201,24 @@ def place_order(api_key, api_secret, base_url, symbol, side, qty_str,
         response = requests.post(url, headers=headers, data=encoded_body, timeout=15)
         response.raise_for_status()
         data = response.json()
-        price_info_log = f"@ {price_str}" if order_type == "Limit" else "(Marketár)"
+        price_info_log = "(Marketár)"
         tpsl_info_log = ""
         if "takeProfit" in body: tpsl_info_log += f", TP: {body['takeProfit']}"
         if "stopLoss" in body: tpsl_info_log += f", SL: {body['stopLoss']}"
 
         if data.get("retCode") == 0:
             order_id_info = data.get('result', {}).get('orderId', 'N/A')
-            log_and_print(f"Sikeres {order_type} rendelés: {symbol} {side} {qty_str} {price_info_log}{tpsl_info_log}. Demo Order ID: {order_id_info}")
+            log_and_print(f"Sikeres Market rendelés: {symbol} {side} {qty_str} {price_info_log}{tpsl_info_log}. Demo Order ID: {order_id_info}")
             return order_id_info
         else:
-            log_and_print(f"HIBA {order_type} rendeléskor ({symbol} {side} {qty_str} {price_info_log}{tpsl_info_log}): {data}")
+            log_and_print(f"HIBA Market rendeléskor ({symbol} {side} {qty_str} {price_info_log}{tpsl_info_log}): {data}")
             return None
     except requests.exceptions.RequestException as e:
-        log_and_print(f"HIBA {order_type} rendelés küldésénél ({symbol}) hálózati hiba: {e}")
+        log_and_print(f"HIBA Market rendelés küldésénél ({symbol}) hálózati hiba: {e}")
         return None
     except Exception as e:
-        log_and_print(f"HIBA {order_type} rendelés küldésénél ({symbol}): {e}")
+        log_and_print(f"HIBA Market rendelés küldésénél ({symbol}): {e}")
         return None
-
-def amend_order_on_demo(api_key, api_secret, base_url, symbol, order_id,
-                        new_qty_str=None, take_profit_str=None, stop_loss_str=None,
-                        tp_trigger_by_str=None, sl_trigger_by_str=None):
-    endpoint = "/v5/order/amend"
-    url = base_url + endpoint
-    timestamp = str(int(time.time() * 1000))
-    body = {"category": "linear", "symbol": symbol, "orderId": order_id}
-
-    if new_qty_str: body["qty"] = new_qty_str
-    
-    body["takeProfit"] = take_profit_str if take_profit_str and quantize_value(take_profit_str, PRICE_PRECISION) > Decimal(0) else "0"
-    body["stopLoss"] = stop_loss_str if stop_loss_str and quantize_value(stop_loss_str, PRICE_PRECISION) > Decimal(0) else "0"
-
-    if tp_trigger_by_str and body["takeProfit"] != "0": body["tpTriggerBy"] = tp_trigger_by_str
-    if sl_trigger_by_str and body["stopLoss"] != "0": body["slTriggerBy"] = sl_trigger_by_str
-    
-    encoded_body = urlencode(body)
-    sign = sign_request(api_key, api_secret, timestamp, "POST", endpoint, encoded_body)
-    headers = {
-        "X-BAPI-API-KEY": api_key, "X-BAPI-SIGN": sign, "X-BAPI-TIMESTAMP": timestamp,
-        "X-BAPI-RECV-WINDOW": "5000", "Content-Type": "application/x-www-form-urlencoded"
-    }
-    try:
-        response = requests.post(url, headers=headers, data=encoded_body, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        if data.get("retCode") == 0:
-            log_and_print(f"Sikeres order módosítás: {symbol}, ID: {order_id}, Qty: {body.get('qty', 'n/a')}, TP: {body.get('takeProfit')}, SL: {body.get('stopLoss')}")
-            return data.get("result", {}).get("orderId")
-        else:
-            if data.get("retCode") == 110044 and "qty" not in body :
-                 pass
-            elif data.get("retCode") == 110007:
-                 log_and_print(f"Order módosítás nem lehetséges, order nem található/teljesült ({symbol}, ID: {order_id}): {data}")
-                 return "FILLED_OR_NOT_FOUND"
-            else:
-                 log_and_print(f"HIBA order módosításakor ({symbol}, ID: {order_id}): {data}")
-            return None
-    except requests.exceptions.RequestException as e:
-        log_and_print(f"HIBA order módosítás API hívásnál ({symbol}, ID: {order_id}) hálózati hiba: {e}")
-        return None
-    except Exception as e:
-        log_and_print(f"HIBA order módosítás API hívásnál ({symbol}, ID: {order_id}): {e}")
-        return None
-
-def cancel_order_on_demo(api_key, api_secret, base_url, symbol, order_id):
-    endpoint = "/v5/order/cancel"
-    url = base_url + endpoint
-    timestamp = str(int(time.time() * 1000))
-    body = {"category": "linear", "symbol": symbol, "orderId": order_id}
-    encoded_body = urlencode(body)
-    sign = sign_request(api_key, api_secret, timestamp, "POST", endpoint, encoded_body)
-    headers = {
-        "X-BAPI-API-KEY": api_key, "X-BAPI-SIGN": sign, "X-BAPI-TIMESTAMP": timestamp,
-        "X-BAPI-RECV-WINDOW": "5000", "Content-Type": "application/x-www-form-urlencoded"
-    }
-    try:
-        response = requests.post(url, headers=headers, data=encoded_body, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        if data.get("retCode") == 0:
-            log_and_print(f"Sikeres order törlés: {symbol}, Order ID: {order_id}")
-            return True
-        else:
-            if data.get("retCode") == 110007:
-                log_and_print(f"Order törlés nem szükséges/lehetséges (nem található/már törölt/teljesült): {symbol}, ID: {order_id}")
-                return True
-            log_and_print(f"HIBA order törlésekor ({symbol}, ID: {order_id}): {data}")
-            return False
-    except requests.exceptions.RequestException as e:
-        log_and_print(f"HIBA order törlés API hívásnál ({symbol}, ID: {order_id}) hálózati hiba: {e}")
-        return False
-    except Exception as e:
-        log_and_print(f"HIBA order törlés API hívásnál ({symbol}, ID: {order_id}): {e}")
-        return False
-
-# --- Szinkronizációs függvények ---
 
 def sync_open_positions(live_api_key, live_api_secret, live_base_url, demo_api_key, demo_api_secret, demo_base_url):
     log_and_print("Nyitott pozíciók szinkronizálása...")
@@ -413,7 +288,7 @@ def sync_open_positions(live_api_key, live_api_secret, live_base_url, demo_api_k
             order_id = place_order(
                 demo_api_key, demo_api_secret, demo_base_url,
                 live_symbol, order_side_for_change, qty_to_change_str,
-                order_type="Market", 
+                order_type="Market",  # Csak piaci megbízás engedélyezett
                 position_idx=live_pos_idx,
                 take_profit_str=live_tp_str,
                 stop_loss_str=calculated_sl_str,
@@ -423,108 +298,6 @@ def sync_open_positions(live_api_key, live_api_secret, live_base_url, demo_api_k
             )
             if order_id:
                 log_and_print(f"Méret igazítva (Market orderrel). Demo Order ID: {order_id}")
-        #else:
-            #log_and_print(f"Demó pozíció mérete megegyezik: {live_symbol} ({live_side}).")
-
-def sync_limit_orders(live_api_key, live_api_secret, live_base_url, demo_api_key, demo_api_secret, demo_base_url):
-    log_and_print("Limit megbízások szinkronizálása...")
-    live_orders = get_limit_orders_from_account(live_api_key, live_api_secret, live_base_url, "Élő")
-    demo_orders = get_limit_orders_from_account(demo_api_key, demo_api_secret, demo_base_url, "Demó")
-    demo_order_map = {}
-    for do in demo_orders:
-        key = (do["symbol"], do["side"], quantize_value(do.get("price","0"), PRICE_PRECISION), do.get("positionIdx", 0))
-        demo_order_map[key] = do
-    
-    for live_order in live_orders:
-        live_symbol = live_order["symbol"]
-        live_side = live_order["side"]
-        live_pos_idx = live_order.get("positionIdx", 0)
-        live_qty_decimal = quantize_value(live_order.get("qty","0"), QTY_PRECISION)
-        live_price_decimal = quantize_value(live_order.get("price","0"), PRICE_PRECISION)
-        
-        target_demo_qty_decimal = (live_qty_decimal * Decimal(str(COPY_MULTIPLIER))).quantize(MIN_QTY_THRESHOLD)
-
-        live_tp_str = live_order.get("takeProfit")
-        live_tp_trigger = live_order.get("tpTriggerBy")
-        live_sl_trigger = live_order.get("slTriggerBy")
-        
-        if target_demo_qty_decimal < MIN_QTY_THRESHOLD:
-            log_and_print(f"Cél demó mennyiség limit orderhez ({live_symbol}) nulla vagy túl kicsi. Cleanup kezeli.")
-            continue
-
-        calculated_sl_str = None
-        if target_demo_qty_decimal > 0 and live_price_decimal > 0:
-            sl_price_decimal = calculate_sl_price(
-                entry_price=live_price_decimal,
-                quantity=target_demo_qty_decimal,
-                side=live_side,
-                loss_usd=DEFAULT_SL_LOSS_USD,
-                price_precision=PRICE_PRECISION
-            )
-            if sl_price_decimal:
-                calculated_sl_str = format_decimal_for_api(sl_price_decimal, PRICE_PRECISION)
-
-        current_demo_order_obj = demo_order_map.get((live_symbol, live_side, live_price_decimal, live_pos_idx))
-        
-        if current_demo_order_obj:
-            demo_order_id = current_demo_order_obj["orderId"]
-            current_demo_qty_decimal = quantize_value(current_demo_order_obj.get("qty","0"), QTY_PRECISION)
-            demo_tp_str = current_demo_order_obj.get("takeProfit", "0")
-            demo_sl_str = current_demo_order_obj.get("stopLoss", "0")
-
-            live_tp_dec = quantize_value(live_tp_str if live_tp_str else "0", PRICE_PRECISION)
-            demo_tp_dec = quantize_value(demo_tp_str if demo_tp_str else "0", PRICE_PRECISION)
-            calculated_sl_dec = quantize_value(calculated_sl_str if calculated_sl_str else "0", PRICE_PRECISION)
-            demo_sl_dec = quantize_value(demo_sl_str if demo_sl_str else "0", PRICE_PRECISION)
-
-            needs_amend = False
-            if current_demo_qty_decimal != target_demo_qty_decimal: needs_amend = True
-            if live_tp_dec != demo_tp_dec or calculated_sl_dec != demo_sl_dec: needs_amend = True
-            
-            if needs_amend:
-                log_and_print(f"\nLimit order módosítás: {live_symbol} ({live_side}) @ {live_price_decimal}, ID: {demo_order_id}")
-                log_and_print(f"CélQty:{target_demo_qty_decimal}, JelenlegiQty:{current_demo_qty_decimal}")
-                log_and_print(f"CélTP:{live_tp_str}, CélSL(számított):{calculated_sl_str}")
-
-                if not AUTO_CONFIRM:
-                    confirm = input(f"Biztosan módosítod a limit ordert ({live_symbol})? (igen/nem): ")
-                    if confirm.lower() != "igen":
-                        log_and_print("Order módosítás kihagyva.")
-                        continue
-                
-                target_demo_qty_str = format_decimal_for_api(target_demo_qty_decimal, QTY_PRECISION)
-                amend_result = amend_order_on_demo(
-                    demo_api_key, demo_api_secret, demo_base_url, live_symbol, demo_order_id,
-                    new_qty_str=target_demo_qty_str, 
-                    take_profit_str=live_tp_str, 
-                    stop_loss_str=calculated_sl_str,
-                    tp_trigger_by_str=live_tp_trigger, 
-                    sl_trigger_by_str=live_sl_trigger
-                )
-                if amend_result == "FILLED_OR_NOT_FOUND":
-                    log_and_print(f"Order ({demo_order_id}) módosítása nem sikerült, mert teljesült/törlődött.")
-            else:
-                log_and_print(f"Limit order rendben: {live_symbol} ({live_side}) @ {live_price_decimal}")
-        else: 
-            log_and_print(f"\nÚj limit order: {live_symbol} ({live_side}) @ {live_price_decimal}, CélQty: {target_demo_qty_decimal}, TP: {live_tp_str}, SL(számított): {calculated_sl_str or 'N/A'}")
-
-            if not AUTO_CONFIRM:
-                confirm = input(f"Új limit order ({live_symbol}) létrehozása demón? (igen/nem): ")
-                if confirm.lower() != "igen":
-                    log_and_print("Új order létrehozása kihagyva.")
-                    continue
-            
-            target_demo_qty_str = format_decimal_for_api(target_demo_qty_decimal, QTY_PRECISION)
-            live_price_str_formatted = format_decimal_for_api(live_price_decimal, PRICE_PRECISION)
-            place_order(
-                demo_api_key, demo_api_secret, demo_base_url,
-                live_symbol, live_side, target_demo_qty_str, live_price_str_formatted,
-                order_type="Limit", position_idx=live_pos_idx,
-                take_profit_str=live_tp_str, 
-                stop_loss_str=calculated_sl_str,
-                tp_trigger_by_str=live_tp_trigger, 
-                sl_trigger_by_str=live_sl_trigger
-            )
 
 def cleanup_demo_positions(live_api_key, live_api_secret, live_base_url, demo_api_key, demo_api_secret, demo_base_url):
     log_and_print("Demó pozíciók tisztítása...")
@@ -562,48 +335,6 @@ def cleanup_demo_positions(live_api_key, live_api_secret, live_base_url, demo_ap
                     order_type="Market", position_idx=demo_pos_idx
                 )
 
-def cleanup_demo_limit_orders(live_api_key, live_api_secret, live_base_url, demo_api_key, demo_api_secret, demo_base_url):
-    log_and_print("Demó limit megbízások tisztítása...")
-    live_orders = get_limit_orders_from_account(live_api_key, live_api_secret, live_base_url, "Élő")
-    demo_orders = get_limit_orders_from_account(demo_api_key, demo_api_secret, demo_base_url, "Demó")
-    
-    live_order_map = {}
-    for lo in live_orders:
-        key = (lo["symbol"], lo["side"], quantize_value(lo.get("price","0"), PRICE_PRECISION), lo.get("positionIdx", 0))
-        live_order_map[key] = (quantize_value(lo.get("qty","0"), QTY_PRECISION) * Decimal(str(COPY_MULTIPLIER))).quantize(MIN_QTY_THRESHOLD)
-
-    for demo_order in demo_orders:
-        demo_symbol = demo_order["symbol"]
-        demo_side = demo_order["side"]
-        demo_pos_idx = demo_order.get("positionIdx", 0)
-        demo_price_decimal = quantize_value(demo_order.get("price","0"), PRICE_PRECISION)
-        demo_key = (demo_symbol, demo_side, demo_price_decimal, demo_pos_idx)
-        
-        target_live_based_qty = live_order_map.get(demo_key, Decimal(0))
-        current_demo_qty_decimal = quantize_value(demo_order.get("qty","0"), QTY_PRECISION)
-
-        if current_demo_qty_decimal > target_live_based_qty:
-            qty_diff = current_demo_qty_decimal - target_live_based_qty
-            if qty_diff >= MIN_QTY_THRESHOLD:
-                if target_live_based_qty == Decimal(0):
-                    log_and_print(f"\nDemó limit order törlése: {demo_symbol} ({demo_side}) @ {demo_price_decimal}, ID: {demo_order['orderId']}.")
-                    if not AUTO_CONFIRM:
-                        confirm = input(f"Biztosan törlöd a demó limit ordert ({demo_symbol})? (igen/nem): ")
-                        if confirm.lower() != "igen":
-                            log_and_print("Order törlés kihagyva.")
-                            continue
-                    cancel_order_on_demo(demo_api_key, demo_api_secret, demo_base_url, demo_symbol, demo_order["orderId"])
-                else:
-                    log_and_print(f"\nDemó limit order mennyiség csökkentése: {demo_symbol} ({demo_side}) @ {demo_price_decimal}.")
-                    if not AUTO_CONFIRM:
-                        confirm = input(f"Biztosan módosítod a demó limit ordert ({demo_symbol})? (igen/nem): ")
-                        if confirm.lower() != "igen":
-                            log_and_print("Order módosítás kihagyva.")
-                            continue
-                    new_qty_str = format_decimal_for_api(target_live_based_qty, QTY_PRECISION)
-                    amend_order_on_demo(demo_api_key, demo_api_secret, demo_base_url, demo_symbol, demo_order["orderId"], new_qty_str=new_qty_str)
-
-# --- Fő futás logika ---
 def main():
     log_and_print("Trade másoló indítása...")
     log_and_print(f"Log fájl: {LOG_FILENAME}")
@@ -620,26 +351,11 @@ def main():
         log_and_print("HIBA: Demó API kapcsolat sikertelen.")
         return
 
-    try:
-        while True:
-            log_and_print("\n" + "="*50)
-            log_and_print(f"Szinkronizációs ciklus indítása - {time.strftime('%Y-%m-%d %H:%M:%S')}")
-            log_and_print("="*50)
-            
-            sync_open_positions(API_KEY_LIVE, API_SECRET_LIVE, BASE_URL_LIVE, API_KEY_DEMO, API_SECRET_DEMO, BASE_URL_DEMO)
-            sync_limit_orders(API_KEY_LIVE, API_SECRET_LIVE, BASE_URL_LIVE, API_KEY_DEMO, API_SECRET_DEMO, BASE_URL_DEMO)
-            cleanup_demo_positions(API_KEY_LIVE, API_SECRET_LIVE, BASE_URL_LIVE, API_KEY_DEMO, API_SECRET_DEMO, BASE_URL_DEMO)
-            cleanup_demo_limit_orders(API_KEY_LIVE, API_SECRET_LIVE, BASE_URL_LIVE, API_KEY_DEMO, API_SECRET_DEMO, BASE_URL_DEMO)
-            
-            log_and_print("\nSzinkronizációs ciklus befejezve.")
-            log_and_print(f"Várakozás {LOOP_INTERVAL_SECONDS} másodpercet a következő ciklusig...")
-            time.sleep(LOOP_INTERVAL_SECONDS)
-
-    except KeyboardInterrupt:
-        log_and_print("\nSzkript leállítva (KeyboardInterrupt). Viszlát!")
-    except Exception as e:
-        log_and_print(f"\nKRITIKUS HIBA A FŐ CIKLUSBAN: {e}")
-        logging.exception("Kritikus hiba a fő ciklusban:")
+    while True:
+        sync_open_positions(API_KEY_LIVE, API_SECRET_LIVE, BASE_URL_LIVE, API_KEY_DEMO, API_SECRET_DEMO, BASE_URL_DEMO)
+        cleanup_demo_positions(API_KEY_LIVE, API_SECRET_LIVE, BASE_URL_LIVE, API_KEY_DEMO, API_SECRET_DEMO, BASE_URL_DEMO)
+        log_and_print(f"Várakozás {LOOP_INTERVAL_SECONDS} másodpercet a következő ciklusig...")
+        time.sleep(LOOP_INTERVAL_SECONDS)
 
 if __name__ == "__main__":
-    main()
+    main() 
