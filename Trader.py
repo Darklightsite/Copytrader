@@ -39,26 +39,33 @@ def log_and_print(msg):
         pass
 
 def calculate_sl_price(entry_price, quantity, side, loss_usd, price_precision):
+def calculate_sl_price(entry_price, quantity, side, loss_usd, price_precision):
     """
     Kiszámolja a stop loss árat a megadott PNL veszteséghez.
+    Ha az SL szint nulla vagy negatív lenne, próbálja a loss_usd-t lépésenként 25-tel csökkenteni,
+    amíg az SL pozitív nem lesz, vagy el nem éri a 0-át.
     """
     if quantity is None or quantity <= Decimal(0) or entry_price <= Decimal(0):
         log_and_print("Figyelem: Az SL számításhoz érvénytelen mennyiség vagy belépési ár.")
         return None
     try:
+        min_loss_usd = 0
         loss_decimal = Decimal(str(loss_usd))
         price_precision_str = '1e-' + str(price_precision)
-        price_change = (loss_decimal / quantity).quantize(Decimal(price_precision_str), rounding=ROUND_DOWN)
-        if side == "Buy":
-            sl_price = entry_price - price_change
-        elif side == "Sell":
-            sl_price = entry_price + price_change
-        else:
-            return None
-        if sl_price <= Decimal(0):
-            log_and_print(f"Figyelem: A számított SL ({sl_price}) nulla vagy negatív lenne, ezért kihagyva.")
-            return None
-        return sl_price.quantize(Decimal(price_precision_str), rounding=ROUND_DOWN)
+        while loss_decimal > Decimal(min_loss_usd):
+            price_change = (loss_decimal / quantity).quantize(Decimal(price_precision_str), rounding=ROUND_DOWN)
+            if side == "Buy":
+                sl_price = entry_price - price_change
+            elif side == "Sell":
+                sl_price = entry_price + price_change
+            else:
+                return None
+            if sl_price > Decimal(0):
+                return sl_price.quantize(Decimal(price_precision_str), rounding=ROUND_DOWN)
+            # Ha az SL nem megfelelő, csökkentsük a loss_usd-t 25-tel és próbáljuk újra
+            loss_decimal -= Decimal('25')
+        log_and_print(f"Figyelem: A számított SL többszöri próbálkozás után is nulla vagy negatív lenne, ezért kihagyva.")
+        return None
     except Exception as e:
         log_and_print(f"HIBA: SL ár számítása során hiba történt: {e}")
         return None
