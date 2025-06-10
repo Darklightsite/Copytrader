@@ -6,6 +6,7 @@ import logging
 import configparser
 import json
 import os
+import sys
 from urllib.parse import urlencode
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
 
@@ -13,18 +14,18 @@ from decimal import Decimal, ROUND_DOWN, InvalidOperation
 LOG_FILENAME = "trade_copier.log"
 STATE_FILENAME = "copied_trades.json"
 
-# A naplózás beállítása, hogy a konzolon és fájlban is megjelenjen minden.
+# LOGGING JAVÍTÁS UTF-8-RA (magyar karakterekhez!)
+file_handler = logging.FileHandler(LOG_FILENAME, mode='a', encoding='utf-8')
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILENAME, mode='w'),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, stream_handler]
 )
 
 def log_and_print(msg):
-    # Mostantól a basicConfig miatt a logging.info() mindenhova ír.
     logging.info(msg)
 
 # --- Config betöltése ---
@@ -52,13 +53,12 @@ MIN_QTY_THRESHOLD = Decimal('1e-' + str(QTY_PRECISION))
 
 # --- Állapotkezelő Függvények ---
 def load_trade_state():
-    if not os.path.exists(STATE_FILENAME): return {}
+    if not os.path.exists(STATE_FILENAME):
+        return {}
     try:
-        with open(STATE_FILENAME, 'r') as f:
+        with open(STATE_FILENAME, 'r', encoding='utf-8') as f:
             state = json.load(f)
-            for key in state:
-                if 'live_qty' in state[key]:
-                    state[key]['live_qty'] = Decimal(state[key]['live_qty'])
+            # minden érték string, csak számításnál alakítjuk Decimal-ra
             return state
     except (json.JSONDecodeError, IOError):
         return {}
@@ -68,10 +68,11 @@ def save_trade_state(state_data):
         state_to_save = {}
         for key, value in state_data.items():
             state_to_save[key] = value.copy()
+            # Decimal-t mindig str-re konvertáljuk mentés előtt
             if 'live_qty' in state_to_save[key]:
                 state_to_save[key]['live_qty'] = str(state_to_save[key]['live_qty'])
-        with open(STATE_FILENAME, 'w') as f:
-            json.dump(state_to_save, f, indent=4)
+        with open(STATE_FILENAME, 'w', encoding='utf-8') as f:
+            json.dump(state_to_save, f, indent=4, ensure_ascii=False)
     except IOError as e:
         log_and_print(f"HIBA: Állapotfájl mentése sikertelen ({STATE_FILENAME}): {e}")
 
@@ -145,11 +146,11 @@ def calculate_sl_price(entry_price, quantity, side, loss_usd_tiers, price_precis
 def quantize_value(value_str, precision_digits):
     try:
         if value_str is None or value_str == "": return Decimal(0)
-        return Decimal(value_str).quantize(Decimal('1e-' + str(precision_digits)), rounding=ROUND_DOWN)
+        return Decimal(str(value_str)).quantize(Decimal('1e-' + str(precision_digits)), rounding=ROUND_DOWN)
     except (InvalidOperation, Exception): return Decimal(0)
 
 def format_decimal_for_api(decimal_value, precision_digits):
-    return f"{decimal_value:.{precision_digits}f}"
+    return f"{Decimal(decimal_value):.{precision_digits}f}"
 
 def place_order(api_key, api_secret, base_url, symbol, side, qty_str, order_type, position_idx, stop_loss_str=None):
     endpoint = "/v5/order/create"
@@ -188,13 +189,13 @@ def set_position_tpsl(api_key, api_secret, base_url, symbol, position_idx, stop_
 def sync_all_trades(live_api_key, live_api_secret, live_base_url, 
                     demo_api_key, demo_api_secret, demo_base_url, 
                     trade_state):
-    
+
     log_and_print("-" * 50)
     live_positions = get_positions_from_account(live_api_key, live_api_secret, live_base_url, "Élő")
     demo_positions = get_positions_from_account(demo_api_key, demo_api_secret, demo_base_url, "Demó")
 
-    live_pos_map = {f"{p['symbol']}-{p['side']}-{p.get('positionIdx', 0)}": p for p in live_positions}
-    demo_pos_map = {f"{p['symbol']}-{p['side']}-{p.get('positionIdx', 0)}": p for p in demo_positions}
+    live_pos_map = {f"{p['symbol']}-{p['side']}-{str(p.get('positionIdx', 0))}": p for p in live_positions}
+    demo_pos_map = {f"{p['symbol']}-{p['side']}-{str(p.get('positionIdx', 0))}": p for p in demo_positions}
     new_state = trade_state.copy()
 
     # 1. LÉPÉS: Lezárt kereskedések kezelése
@@ -205,7 +206,14 @@ def sync_all_trades(live_api_key, live_api_secret, live_base_url,
             if key in demo_pos_map:
                 demo_pos_to_close = demo_pos_map[key]
                 log_and_print(f"'{key}' zárása a demó fiókon, mert az élőn már nem létezik.")
-                place_order(demo_api_key, demo_api_secret, demo_base_url, demo_pos_to_close['symbol'], "Buy" if demo_pos_to_close['side'] == "Sell" else "Sell", demo_pos_to_close['size'], "Market", demo_pos_to_close.get('positionIdx', 0))
+                place_order(
+                    demo_api_key, demo_api_secret, demo_base_url,
+                    demo_pos_to_close['symbol'],
+                    "Buy" if demo_pos_to_close['side'] == "Sell" else "Sell",
+                    demo_pos_to_close['size'],
+                    "Market",
+                    demo_pos_to_close.get('positionIdx', 0)
+                )
             del new_state[key]
             log_and_print(f"'{key}' eltávolítva az állapotból.")
 
@@ -220,23 +228,23 @@ def sync_all_trades(live_api_key, live_api_secret, live_base_url,
         if target_demo_qty_decimal < MIN_QTY_THRESHOLD: continue
         current_demo_qty_decimal = quantize_value(demo_pos_map.get(key, {}).get('size', '0'), QTY_PRECISION)
         last_copied_data = new_state.get(key, {})
-        last_copied_live_qty = last_copied_data.get('live_qty', Decimal(0))
+        last_copied_live_qty = quantize_value(last_copied_data.get('live_qty', '0'), QTY_PRECISION)
         
-        # Eset: Új kereskedés
+        # --- Új kereskedés ---
         if key not in new_state:
             log_and_print(f"\n>>> ÚJ KERESKEDÉS: {key}")
             target_demo_qty_str = format_decimal_for_api(target_demo_qty_decimal, QTY_PRECISION)
-            
             sl_str = None
             market_price = get_market_price(live_symbol, demo_base_url, demo_api_key, demo_api_secret)
             if market_price:
                 sl_price = calculate_sl_price(market_price, target_demo_qty_decimal, live_side, SL_LOSS_TIERS_USD, PRICE_PRECISION)
                 if sl_price: sl_str = format_decimal_for_api(sl_price, PRICE_PRECISION)
-            
             order_id = place_order(demo_api_key, demo_api_secret, demo_base_url, live_symbol, live_side, target_demo_qty_str, "Market", live_pos_idx, stop_loss_str=sl_str)
-            if order_id: new_state[key] = {'live_qty': live_qty_decimal}
+            if order_id:
+                # Decimal mentése stringként!
+                new_state[key] = {'live_qty': str(live_qty_decimal)}
 
-        # Eset: Meglévő kereskedés
+        # --- Meglévő kereskedés ---
         else:
             live_qty_diff = live_qty_decimal - last_copied_live_qty
             if live_qty_diff > 0:
@@ -256,8 +264,9 @@ def sync_all_trades(live_api_key, live_api_secret, live_base_url,
                             if sl_price:
                                 sl_str = format_decimal_for_api(sl_price, PRICE_PRECISION)
                                 set_position_tpsl(demo_api_key, demo_api_secret, demo_base_url, live_symbol, live_pos_idx, sl_str)
-                        new_state[key] = {'live_qty': live_qty_decimal}
-                else: log_and_print(f"Növekedés észlelve, de a demó méret már helyes. Nincs teendő. Kulcs: {key}")
+                        new_state[key] = {'live_qty': str(live_qty_decimal)}
+                else:
+                    log_and_print(f"Növekedés észlelve, de a demó méret már helyes. Nincs teendő. Kulcs: {key}")
             
             elif live_qty_diff < 0:
                 log_and_print(f"\n>>> POZÍCIÓ CSÖKKENTÉSE: {key}")
@@ -267,34 +276,38 @@ def sync_all_trades(live_api_key, live_api_secret, live_base_url,
                     qty_to_close_str = format_decimal_for_api(qty_to_close_demo, QTY_PRECISION)
                     closing_side = "Buy" if live_side == "Sell" else "Sell"
                     order_id = place_order(demo_api_key, demo_api_secret, demo_base_url, live_symbol, closing_side, qty_to_close_str, "Market", live_pos_idx)
-                    if order_id: new_state[key] = {'live_qty': live_qty_decimal}
-                else: log_and_print(f"Csökkenés észlelve, de a demó méret már helyes. Nincs teendő. Kulcs: {key}")
+                    if order_id:
+                        new_state[key] = {'live_qty': str(live_qty_decimal)}
+                else:
+                    log_and_print(f"Csökkenés észlelve, de a demó méret már helyes. Nincs teendő. Kulcs: {key}")
+
     return new_state
 
 # --- Fő Futási Logika ---
 def main():
     log_and_print("="*60)
-    log_and_print("Trade másoló indítása (Verzió: 8 - Részletes Naplózás)")
+    log_and_print("Trade másoló indítása (Verzió: 8 - Részletes Naplózás, UTF-8 logolás)")
     log_and_print(f"Állapot fájl: {STATE_FILENAME}")
     
     trade_state = load_trade_state()
+    log_and_print(f"Betöltött állapot: {trade_state}")
 
     try:
         while True:
             log_and_print("\n" + "="*60)
             log_and_print(f"Szinkronizációs ciklus indítása - {time.strftime('%Y-%m-%d %H:%M:%S')}")
-            
+
             updated_state = sync_all_trades(
                 API_KEY_LIVE, API_SECRET_LIVE, BASE_URL_LIVE,
                 API_KEY_DEMO, API_SECRET_DEMO, BASE_URL_DEMO,
                 trade_state
             )
-            
+
             if updated_state != trade_state:
                 log_and_print("\nÁllapot megváltozott, mentés...")
                 save_trade_state(updated_state)
                 trade_state = updated_state
-            
+
             log_and_print(f"\nCiklus befejezve. Várakozás {LOOP_INTERVAL_SECONDS} másodpercet...")
             time.sleep(LOOP_INTERVAL_SECONDS)
 
