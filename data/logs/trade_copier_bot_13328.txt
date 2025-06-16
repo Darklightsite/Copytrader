@@ -1,0 +1,8 @@
+2025-06-16 22:14:11,729 - INFO - [run] - Telegram bot processz indul...
+2025-06-16 22:16:44,149 - INFO - [status_command] - /status parancs fogadva.
+2025-06-16 22:16:57,167 - INFO - [pnl_command] - /pnl parancs fogadva.
+2025-06-16 22:18:48,715 - INFO - [chart_start] - /chart parancs fogadva.
+2025-06-16 22:18:50,295 - INFO - [select_period] - Chart: Időszak kiválasztva: daily
+2025-06-16 22:18:51,448 - INFO - [select_account_and_generate] - Chart: Számla kiválasztva: Élő. Grafikon generálása...
+2025-06-16 22:18:52,009 - INFO - [select_account_and_generate] - Grafikon sikeresen legenerálva.
+2025-06-16 22:19:01,531 - INFO - [status_command] - /status parancs fogadva.

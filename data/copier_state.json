@@ -1,0 +1,25 @@
+{
+    "last_processed_exec_id": "adb6bf25-7d7c-5e89-8c46-52da79142522",
+    "position_map": {
+        "NOTUSDT-Buy": true,
+        "SNXUSDT-Buy": true,
+        "ARBUSDT-Buy": true,
+        "APEUSDT-Sell": true,
+        "1000PEPEUSDT-Buy": true,
+        "SHIB1000USDT-Buy": true,
+        "CFXUSDT-Buy": true,
+        "FILUSDT-Buy": true,
+        "NEARUSDT-Buy": true,
+        "SANDUSDT-Buy": true,
+        "APEUSDT-Buy": true,
+        "SHIB1000USDT-Sell": true,
+        "NEARUSDT-Sell": true,
+        "SNXUSDT-Sell": true,
+        "SANDUSDT-Sell": true,
+        "FILUSDT-Sell": true,
+        "NOTUSDT-Sell": true,
+        "1000PEPEUSDT-Sell": true,
+        "ARBUSDT-Sell": true,
+        "CFXUSDT-Sell": true
+    }
+}
