@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: satra/gdrive-downloader@v1
 
       - name: Download Google Drive folder
         uses: jdonr/gdrive-downloader@v1
