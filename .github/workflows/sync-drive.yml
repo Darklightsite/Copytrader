@@ -1,0 +1,30 @@
+name: Sync Google Drive Folder to GitHub
+
+on:
+  # Időzített futtatás: minden nap éjfélkor lefut
+  schedule:
+    - cron: '0 0 * * *'
+  
+  # Kézi indítás: lehetővé teszi, hogy a GitHub Actions fülről manuálisan is elindítsd
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Google Drive folder
+        uses: jdonr/gdrive-downloader@v1
+        with:
+          gdrive-folder-id: '1SweHd5mgCX7eTr9EmtRHb6jjkcnMyaNf-T'  # <-- CSERÉLD LE!
+          gdrive-credentials: ${{ secrets.GDRIVE_CREDENTIALS }}
+          output-path: '.' # A repository gyökerébe tölti le a fájlokat
+
+      - name: Commit and push if there are changes
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          # A --exit-code kapcsolóval a git diff hibakóddal tér vissza, ha van változás
+          git diff --quiet --exit-code || (git add -A && git commit -m "Automated sync from Google Drive" && git push)
