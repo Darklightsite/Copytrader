@@ -36,7 +36,8 @@ jobs:
       # FONTOS: Itt a saját mappa ID-dnak kell szerepelnie!
       - name: Download folder with gdown
         run: gdown --folder '1SweHd5mgCX7eTr9EmtRHb6jjkcnMyaNf' -O . --quiet
-
+      - name: List downloaded files for debugging
+        run: ls -R
       # 5. lépés: Változások commitelése és feltöltése
       - name: Commit and push if there are changes
         run: |
