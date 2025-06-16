@@ -3,7 +3,7 @@ name: Sync Google Drive Folder to GitHub
 on:
   # Időzített futtatás: minden nap éjfélkor lefut
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '*/5 * * * *'
   
   # Kézi indítás: lehetővé teszi, hogy a GitHub Actions fülről manuálisan is elindítsd
   workflow_dispatch:
