@@ -1,30 +1,26 @@
-name: Sync Google Drive Folder to GitHub
-
-on:
-  # Időzített futtatás: minden nap éjfélkor lefut
-  schedule:
-    - cron: '*/5 * * * *'
-  
-  # Kézi indítás: lehetővé teszi, hogy a GitHub Actions fülről manuálisan is elindítsd
-  workflow_dispatch:
-
-jobs:
-  sync:
-    runs-on: ubuntu-latest
     steps:
+      # 1. lépés: A repository tartalmának letöltése (ez nem változott)
       - name: Checkout repository
-        uses: satra/gdrive-downloader@v1
+        uses: actions/checkout@v4
 
-      - name: Download Google Drive folder
-        uses: jdonr/gdrive-downloader@v1
+      # 2. lépés: Hitelesítés a Google Cloud felé a hivatalos action segítségével
+      # Ugyanazt a GDRIVE_CREDENTIALS titkot használja, amit korábban létrehoztál!
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v2'
         with:
-          gdrive-folder-id: '1SweHd5mgCX7eTr9EmtRHb6jjkcnMyaNf'  # <-- CSERÉLD LE!
-          gdrive-credentials: ${{ secrets.GDRIVE_CREDENTIALS }}
-          output-path: '.' # A repository gyökerébe tölti le a fájlokat
+          credentials_json: '${{ secrets.GDRIVE_CREDENTIALS }}'
 
+      # 3. lépés: A gdown letöltő eszköz telepítése
+      - name: Install gdown
+        run: pip install gdown
+
+      # 4. lépés: A mappa letöltése a gdown eszközzel
+      - name: Download folder with gdown
+        run: gdown --folder '1SweHd5mgCX7eTr9EmtRHb6jjkcnMyaNf' -O . --quiet
+
+      # 5. lépés: Változások commitelése és feltöltése (ez sem változott)
       - name: Commit and push if there are changes
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          # A --exit-code kapcsolóval a git diff hibakóddal tér vissza, ha van változás
           git diff --quiet --exit-code || (git add -A && git commit -m "Automated sync from Google Drive" && git push)
