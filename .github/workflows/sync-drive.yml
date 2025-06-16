@@ -18,7 +18,7 @@ jobs:
       - name: Download Google Drive folder
         uses: jdonr/gdrive-downloader@v1
         with:
-          gdrive-folder-id: '1SweHd5mgCX7eTr9EmtRHb6jjkcnMyaNf-T'  # <-- CSERÉLD LE!
+          gdrive-folder-id: '1SweHd5mgCX7eTr9EmtRHb6jjkcnMyaNf'  # <-- CSERÉLD LE!
           gdrive-credentials: ${{ secrets.GDRIVE_CREDENTIALS }}
           output-path: '.' # A repository gyökerébe tölti le a fájlokat
 
