@@ -1,141 +1,153 @@
+# FÁJL: modules/sync_logic.py
+
 import time
 import logging
 from decimal import Decimal
 
-from modules.api_handler import get_data
-from modules.order_handler import place_order_on_demo, determine_position_idx
-# JAVÍTÁS: Importálás az új, dedikált telegram_sender modulból
-from modules.telegram_sender import send_telegram_message
+from .api_handler import get_data
+from .order_handler import place_order_on_demo, set_leverage_on_demo, _determine_position_idx
 
-MIN_ORDER_VALUE_USDT = 5.0
+logger = logging.getLogger()
 
-def perform_initial_sync(cfg, state_manager, reporting_manager):
-    """Elvégzi a kezdeti szinkronizációt az élő és demó számlák között."""
-    logger = logging.getLogger()
+def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_events):
+    # ... (a függvény többi része változatlan) ...
+    pass
+
+def main_event_loop(config_data, state_manager, reporting_manager, cycle_events):
+    # ... (a függvény többi része változatlan) ...
+    pass
+
+# A teljes, helyes kódot az előző válaszomban megtalálod, a lényeg a fenti
+# "from .order_handler import..." sor, ami most már a _determine_position_idx-et is tartalmazza.
+# A biztonság kedvéért itt van újra a teljes, helyes tartalom:
+
+def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_events):
     logger.info("=" * 60)
     logger.info("KEZDETI SZINKRONIZÁCIÓ INDUL...")
     
-    pos_params = {'category': 'linear', 'settleCoin': 'USDT'}
-    live_positions = get_data(cfg['live_api'], "/v5/position/list", pos_params).get('list', [])
-    demo_positions = get_data(cfg['demo_api'], "/v5/position/list", pos_params).get('list', [])
+    activity_detected = False
+    live_api = config_data['live_api']
+    multiplier = Decimal(str(config_data['settings']['copy_multiplier']))
+    qty_precision = config_data['settings']['qty_precision']
     
-    live_pos_dict = {f"{p['symbol']}-{p['side']}": p for p in live_positions if float(p.get('size', '0')) > 0}
-    demo_pos_dict = {f"{p['symbol']}-{p['side']}": p for p in demo_positions if float(p.get('size', '0')) > 0}
-    
-    logger.info(f"Élő pozíciók: {len(live_pos_dict)} db, Demó pozíciók: {len(demo_pos_dict)} db.")
-    
-    activity_in_sync = False
-    for key, demo_pos in demo_pos_dict.items():
-        if key not in live_pos_dict:
-            activity_in_sync = True
-            logger.info(f"[SYNC] Árva demó pozíció észlelve: {key}. Zárás...")
-            close_params = {
-                "category": "linear", "symbol": demo_pos['symbol'], 
-                "side": "Sell" if demo_pos['side'] == "Buy" else "Buy", 
-                "orderType": "Market", "qty": demo_pos['size'], 
-                "positionIdx": determine_position_idx(cfg, demo_pos['side']), "reduceOnly": True
-            }
-            if place_order_on_demo(cfg, close_params, reporting_manager):
-                time.sleep(3)
-                closed_pnl, new_daily_pnl = reporting_manager.get_pnl_update_after_close(cfg['demo_api'], demo_pos['symbol'])
-                pnl_msg = f"*PnL: ${closed_pnl:.2f}*" if closed_pnl is not None else "PnL nem elérhető"
-                daily_pnl_msg = f"Napi PnL: ${new_daily_pnl:.2f}" if new_daily_pnl is not None else ""
-                msg = f"🧹 *POZÍCIÓ ZÁRÁSA (Árva):*\n{demo_pos['symbol']} | {demo_pos['side']} | {demo_pos['size']}\n{pnl_msg}\n{daily_pnl_msg}"
-                send_telegram_message(cfg, msg)
+    params = {'category': 'linear', 'settleCoin': 'USDT'}
+    live_positions_resp = get_data(live_api, "/v5/position/list", params)
+    demo_positions_resp = get_data(config_data['demo_api'], "/v5/position/list", params)
 
-    for key, live_pos in live_pos_dict.items():
-        min_qty_threshold = Decimal('1e-' + str(cfg['settings']['qty_precision']))
-        expected_qty = (Decimal(live_pos['size']) * cfg['settings']['copy_multiplier']).quantize(min_qty_threshold)
-        if expected_qty <= 0: continue
+    if live_positions_resp is None or demo_positions_resp is None:
+        return False
 
-        demo_pos = demo_pos_dict.get(key)
-        open_params = {"category": "linear", "symbol": live_pos['symbol'], "side": live_pos['side'], "orderType": "Market", "qty": str(expected_qty), "positionIdx": determine_position_idx(cfg, live_pos['side'])}
+    live_positions = {f"{p['symbol']}-{p['side']}": p for p in live_positions_resp.get('list', []) if float(p.get('size', '0')) > 0}
+    demo_positions = {f"{p['symbol']}-{p['side']}": p for p in demo_positions_resp.get('list', []) if float(p.get('size', '0')) > 0}
+    
+    logger.info(f"Élő pozíciók: {len(live_positions)} db, Demó pozíciók: {len(demo_positions)} db.")
+
+    for pos_id, demo_pos in demo_positions.items():
+        if pos_id not in live_positions:
+            activity_detected = True
+            pos_idx = _determine_position_idx(config_data, demo_pos['side'])
+            close_params = {'category': 'linear', 'symbol': demo_pos['symbol'], 'side': 'Sell' if demo_pos['side'] == 'Buy' else 'Buy', 'qty': demo_pos['size'], 'reduceOnly': True, 'positionIdx': pos_idx, 'orderType': 'Market'}
+            place_order_on_demo(config_data, close_params)
+            time.sleep(0.5)
+
+    for pos_id, live_pos in live_positions.items():
+        expected_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
+        pos_idx = _determine_position_idx(config_data, live_pos['side'])
         
-        if not demo_pos:
-            activity_in_sync = True
-            logger.info(f"  -> Hiányzik a demóról. Nyitás {expected_qty} mérettel...")
-            if place_order_on_demo(cfg, open_params, reporting_manager): state_manager.map_position(live_pos['symbol'], live_pos['side'])
-        elif Decimal(demo_pos['size']) != expected_qty:
-            activity_in_sync = True
-            logger.info(f"  -> Méreteltérés. Élő (szorozva): {expected_qty}, Demó: {demo_pos['size']}. Korrekció...")
-            close_params = {"category": "linear", "symbol": demo_pos['symbol'], "side": "Sell" if demo_pos['side'] == "Buy" else "Buy", "orderType": "Market", "qty": demo_pos['size'], "positionIdx": determine_position_idx(cfg, demo_pos['side']), "reduceOnly": True}
-            if place_order_on_demo(cfg, close_params, reporting_manager):
-                time.sleep(1.5)
-                if place_order_on_demo(cfg, open_params, reporting_manager): state_manager.map_position(live_pos['symbol'], live_pos['side'])
+        leverage = live_pos.get('leverage', '10')
+        set_leverage_on_demo(config_data, live_pos['symbol'], leverage)
+        time.sleep(0.5)
+
+        open_params = {'category': 'linear', 'symbol': live_pos['symbol'], 'side': live_pos['side'], 'qty': str(expected_qty), 'reduceOnly': False, 'positionIdx': pos_idx, 'orderType': 'Market'}
+        
+        if pos_id in demo_positions:
+            actual_qty = Decimal(demo_positions[pos_id]['size'])
+            if abs(actual_qty - expected_qty) > Decimal('1e-' + str(qty_precision)):
+                activity_detected = True
+                close_params = {'category': 'linear', 'symbol': live_pos['symbol'], 'side': 'Sell' if live_pos['side'] == 'Buy' else 'Buy', 'qty': str(actual_qty), 'reduceOnly': True, 'positionIdx': pos_idx, 'orderType': 'Market'}
+                place_order_on_demo(config_data, close_params)
+                time.sleep(1)
+                if place_order_on_demo(config_data, open_params):
+                    cycle_events.append({'type': 'open', 'data': {'symbol': live_pos['symbol'], 'side': live_pos['side'], 'qty': str(expected_qty), 'is_increase': True}})
         else:
-            logger.info(f"  -> Pozíció rendben, leképezés rögzítve.")
-            state_manager.map_position(live_pos['symbol'], live_pos['side'])
+            activity_detected = True
+            if place_order_on_demo(config_data, open_params):
+                cycle_events.append({'type': 'open', 'data': {'symbol': live_pos['symbol'], 'side': live_pos['side'], 'qty': str(expected_qty), 'is_increase': False}})
 
-    latest_exec = get_data(cfg['live_api'], "/v5/execution/list", {"category": "linear", "limit": 1}).get('list', [])
-    if latest_exec: state_manager.set_last_id(latest_exec[0]['execId'])
-    logger.info(f"Kezdő eseményazonosító beállítva: {state_manager.get_last_id()}"); logging.info("KEZDETI SZINKRONIZÁCIÓ BEFEJEZVE!"); logging.info("=" * 60)
-    return activity_in_sync
+        state_manager.map_position(live_pos['symbol'], live_pos['side'])
+        time.sleep(1)
 
-def main_event_loop(cfg, state_manager, reporting_manager):
-    """A fő eseményfigyelő ciklus, ami az új kötéseket keresi."""
-    logger = logging.getLogger()
-    activity_this_cycle = False
+    try:
+        recent_executions = get_data(live_api, "/v5/execution/list", {'category': 'linear', 'limit': 1})
+        if recent_executions and recent_executions.get('list'):
+            state_manager.set_last_id(recent_executions['list'][0]['execId'])
+    except Exception as e:
+        logger.error(f"Hiba a legfrissebb esemény ID lekérdezése közben: {e}", exc_info=True)
+        state_manager.set_last_id("initial_sync_error")
+
+    logger.info("KEZDETI SZINKRONIZÁCIÓ BEFEJEZVE!")
+    return activity_detected
+
+def main_event_loop(config_data, state_manager, reporting_manager, cycle_events):
+    activity_detected = False
     last_known_id = state_manager.get_last_id()
-    if not last_known_id: 
-        logger.error("Nincs kezdő eseményazonosító, a ciklus nem tud elindulni.")
-        return activity_this_cycle
-    
-    logger.info(f"Új kereskedési események keresése (utolsó ismert ID: {last_known_id})...")
-    all_recent_fills = get_data(cfg['live_api'], "/v5/execution/list", {"category": "linear", "limit": 100}).get('list', [])
-    if not all_recent_fills: 
-        logger.info("Nem sikerült lekérni a kötéslistát, vagy a lista üres.")
-        return activity_this_cycle
+    if not last_known_id:
+        return activity_detected
 
+    recent_fills_data = get_data(config_data['live_api'], "/v5/execution/list", {"category": "linear", "limit": 100})
+    if not recent_fills_data or not recent_fills_data.get('list'):
+        return activity_detected
+
+    recent_fills = recent_fills_data['list']
     new_fills_to_process = []
-    for fill in all_recent_fills:
+    for fill in recent_fills:
         if fill['execId'] == last_known_id: break
         new_fills_to_process.append(fill)
-    
-    if not new_fills_to_process: 
+
+    if not new_fills_to_process:
         logger.info("Nincs új esemény az utolsó feldolgozás óta.")
-        return activity_this_cycle
-    
-    activity_this_cycle = True
-    logger.info(f"{len(new_fills_to_process)} új esemény található. Feldolgozás...")
-    min_qty_threshold = Decimal('1e-' + str(cfg['settings']['qty_precision']))
+        return activity_detected
+        
+    activity_detected = True
+    multiplier = Decimal(str(config_data['settings']['copy_multiplier']))
+    qty_precision = config_data['settings']['qty_precision']
 
     for fill in reversed(new_fills_to_process):
-        symbol, side, qty, closed_size, price = fill['symbol'], fill['side'], fill['execQty'], fill['closedSize'], float(fill['execPrice'])
-        if cfg['settings']['symbols_to_copy'] and symbol not in cfg['settings']['symbols_to_copy']:
-            logger.debug(f"Kötés kihagyva: {symbol} nem szerepel a listán.")
+        symbol, side, exec_qty_str, closed_size_str = fill['symbol'], fill['side'], fill['execQty'], fill['closedSize']
+        
+        if config_data['settings'].get('symbols_to_copy') and symbol not in config_data['settings']['symbols_to_copy']:
             continue
-        
-        logger.info(f"ESEMÉNY: {symbol} | Oldal: {side} | Mennyiség: {qty} | Zárt méret: {closed_size}")
-        
-        if float(closed_size) > 0:
+
+        if float(closed_size_str) > 0:
             position_side = "Sell" if side == "Buy" else "Buy"
             if state_manager.is_position_mapped(symbol, position_side):
-                demo_qty = (Decimal(closed_size) * cfg['settings']['copy_multiplier']).quantize(min_qty_threshold)
-                logger.info(f"  -> Záró esemény. Demó zárása {demo_qty} mérettel...")
-                params = { "category": "linear", "symbol": symbol, "side": side, "orderType": "Market", "qty": str(demo_qty), "positionIdx": determine_position_idx(cfg, position_side), "reduceOnly": True }
-                if place_order_on_demo(cfg, params, reporting_manager): state_manager.remove_mapping(symbol, position_side)
-            else: 
-                logger.warning(f"Záró esemény egy NEM követett pozícióra ({symbol}-{position_side}). Kihagyva.")
+                demo_qty = (Decimal(closed_size_str) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
+                pos_idx = _determine_position_idx(config_data, position_side)
+                params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': str(demo_qty), 'reduceOnly': True, 'orderType': 'Market', 'positionIdx': pos_idx}
+                if place_order_on_demo(config_data, params):
+                    state_manager.remove_mapping(symbol, position_side)
+                    time.sleep(1.5)
+                    closed_pnl, daily_pnl = reporting_manager.get_pnl_update_after_close(config_data['demo_api'], symbol)
+                    cycle_events.append({'type': 'close', 'data': {'symbol': symbol, 'side': position_side, 'qty': str(demo_qty), 'pnl': closed_pnl, 'daily_pnl': daily_pnl}})
         else:
-            is_new_pos = not state_manager.is_position_mapped(symbol, side)
-            demo_qty = (Decimal(qty) * cfg['settings']['copy_multiplier']).quantize(min_qty_threshold)
-            if demo_qty == 0: 
-                logger.warning(f"A szorzó és kerekítés után a másolandó mennyiség 0 lenne. Kihagyva.")
-                continue
+            is_increase = state_manager.is_position_mapped(symbol, side)
+            if not is_increase:
+                live_positions_resp = get_data(config_data['live_api'], "/v5/position/list", {'category': 'linear', 'symbol': symbol})
+                if live_positions_resp and live_positions_resp.get('list'):
+                    live_pos = live_positions_resp['list'][0]
+                    leverage = live_pos.get('leverage', '10')
+                    set_leverage_on_demo(config_data, symbol, leverage)
+                    time.sleep(0.5)
+
+            demo_qty = (Decimal(exec_qty_str) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
+            if demo_qty <= 0: continue
             
-            if is_new_pos: 
-                logger.info(f"  -> Új pozíció. Demó nyitása {demo_qty} mérettel...")
+            pos_idx = _determine_position_idx(config_data, side)
+            params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': str(demo_qty), 'reduceOnly': False, 'orderType': 'Market', 'positionIdx': pos_idx}
+            if place_order_on_demo(config_data, params):
                 state_manager.map_position(symbol, side)
-            else: 
-                logger.info(f"  -> Pozíció növelése. Demó növelése {demo_qty} mérettel...")
-            
-            params = { "category": "linear", "symbol": symbol, "side": side, "orderType": "Market", "qty": str(demo_qty), "positionIdx": determine_position_idx(cfg, side), "reduceOnly": False }
-            if (float(demo_qty) * price) < MIN_ORDER_VALUE_USDT: 
-                logger.warning(f"MEGBÍZÁS KIHAGYVA: Értéke ({float(demo_qty) * price:.2f} USDT) alacsonyabb mint {MIN_ORDER_VALUE_USDT} USDT.")
-                continue
-            
-            place_order_on_demo(cfg, params, reporting_manager)
-            
-    state_manager.set_last_id(all_recent_fills[0]['execId'])
-    logger.info(f"Állapot frissítve. Új utolsó esemény ID: {state_manager.get_last_id()}")
-    return activity_this_cycle
+                reporting_manager.update_activity_log("copy")
+                cycle_events.append({'type': 'open', 'data': {'symbol': symbol, 'side': side, 'qty': str(demo_qty), 'is_increase': is_increase}})
+
+    state_manager.set_last_id(recent_fills[0]['execId'])
+    return activity_detected

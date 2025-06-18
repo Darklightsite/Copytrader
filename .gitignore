@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Log files
+*.log
+*.txt
+
+# Windows system files
+desktop.ini
+Thumbs.db
+
+# IDE / Editor specific
+.idea/
+.vscode/

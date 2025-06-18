@@ -1,37 +1,62 @@
+
 import configparser
+import logging
 import json
-from decimal import Decimal
-from pathlib import Path
 
-# A fő könyvtárban lévő config.ini-re hivatkozunk
-CONFIG_FILE = Path(__file__).resolve().parent.parent / "config.ini"
+logger = logging.getLogger()
 
-def load_configuration():
-    """Beolvassa és feldolgozza a konfigurációs fájlt."""
-    if not CONFIG_FILE.exists():
-        # A naplózás még nem él, ezért printet használunk
-        print(f"KRITIKUS HIBA: A konfigurációs fájl nem található: {CONFIG_FILE}")
+def load_configuration(path='config.ini'):
+    """Beolvassa és validálja a konfigurációt a megadott .ini fájlból."""
+    parser = configparser.ConfigParser()
+    if not parser.read(path, encoding='utf-8'):
+        logger.critical(f"A konfigurációs fájl ({path}) nem található vagy üres!")
         return None
+
+    config = {}
     try:
-        config = configparser.ConfigParser(interpolation=None)
-        config.read(CONFIG_FILE, encoding='utf-8')
-        sl_tiers_str = config.get('settings', 'SL_LOSS_TIERS_USD', fallback='10, 20, 30')
-        
-        return {
-            "live_api": {'key': config['api']['api_key_live'], 'secret': config['api']['api_secret_live'], 'url': "https://api.bybit.com"},
-            "demo_api": {'key': config['api']['api_key_demo'], 'secret': config['api']['api_secret_demo'], 'url': "https://api-demo.bybit.com"},
-            "telegram": {'token': config.get('telegram', 'bot_token', fallback=None), 'chat_id': config.get('telegram', 'chat_id', fallback=None)},
-            "settings": {
-                'loop_interval': config.getint('settings', 'LoopIntervalSeconds', fallback=15),
-                'symbols_to_copy': json.loads(config.get('settings', 'SymbolsToCopy', fallback='[]')),
-                'log_level': config.get('settings', 'LogLevel', fallback='INFO'),
-                'clearlogonstartup': config.getboolean('settings', 'ClearLogOnStartup', fallback=False),
-                'copy_multiplier': Decimal(str(config.getfloat('settings', 'COPY_MULTIPLIER', fallback=1.0))),
-                'qty_precision': config.getint('settings', 'QTY_PRECISION', fallback=3),
-                'sl_loss_tiers_usd': sorted([float(x.strip()) for x in sl_tiers_str.split(',')], reverse=True)
-            },
-            "account_modes": {'demo_mode': config.get('account_modes', 'DemoAccountPositionMode', fallback='Hedge').strip().capitalize()}
+        # API Szekció
+        config['live_api'] = {
+            'api_key': parser.get('api', 'api_key_live'),
+            'api_secret': parser.get('api', 'api_secret_live'),
+            'url': 'https://api.bybit.com',  # Helyes élő URL 
+            'is_demo': False
         }
-    except Exception as e:
-        print(f"KRITIKUS HIBA a konfiguráció feldolgozásakor: {e}")
+        config['demo_api'] = {
+            'api_key': parser.get('api', 'api_key_demo'),
+            'api_secret': parser.get('api', 'api_secret_demo'),
+            'url': 'https://api-demo.bybit.com',  # Helyes demó URL 
+            'is_demo': True
+        }
+
+        # Telegram Szekció
+        config['telegram'] = {
+            'bot_token': parser.get('telegram', 'bot_token', fallback=None),
+            'chat_id': parser.get('telegram', 'chat_id', fallback=None)
+        }
+        
+        # Account Modes Szekció
+        config['account_modes'] = {
+            'demo_mode': parser.get('account_modes', 'demo_mode', fallback='Hedge')
+        }
+
+        # Settings Szekció
+        sl_tiers_str = parser.get('settings', 'SL_LOSS_TIERS_USD', fallback='10, 20, 30')
+        config['settings'] = {
+            'live_start_date': parser.get('settings', 'LiveStartDate', fallback=None),
+            'demo_start_date': parser.get('settings', 'DemoStartDate', fallback=None),
+                      'log_rotation_backup_count': parser.getint('settings', 'LogRotationBackupCount', fallback=14),
+            'loop_interval': parser.getint('settings', 'LoopIntervalSeconds', fallback=120),
+            'symbols_to_copy': json.loads(parser.get('settings', 'SymbolsToCopy', fallback='[]')),
+            'log_level': parser.get('settings', 'LogLevel', fallback='INFO'),
+            'clear_log_on_startup': parser.getboolean('settings', 'ClearLogOnStartup', fallback=True),
+            'copy_multiplier': parser.getfloat('settings', 'COPY_MULTIPLIER', fallback=1.0), # 
+            'qty_precision': parser.getint('settings', 'QTY_PRECISION', fallback=4),
+            'sl_loss_tiers_usd': sorted([float(x.strip()) for x in sl_tiers_str.split(',')], reverse=True)
+        }
+        
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError, json.JSONDecodeError) as e:
+        logger.critical(f"Konfigurációs hiba a(z) {path} fájlban. Hiba: {e}", exc_info=True) # 
         return None
+
+    logger.info("Konfiguráció sikeresen betöltve.")
+    return config
