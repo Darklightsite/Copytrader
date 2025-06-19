@@ -7,7 +7,9 @@ import configparser
 import requests
 from pathlib import Path
 from datetime import datetime, timezone, timedelta  # JAVÍTVA: timedelta importálva
-
+from modules.order_aggregator import OrderAggregator
+from modules.order_handler import place_order_on_demo, set_leverage_on_demo
+from decimal import Decimal
 # Modul importok (a többi változatlan)
 from modules.config_loader import load_configuration
 from modules.logger_setup import setup_logging
@@ -23,7 +25,49 @@ from modules.telegram_formatter import format_cycle_summary
 __version__ = "14.2.0 (Stabil Indítás)"
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
+def process_aggregated_orders(orders, config, state_manager, reporting_manager, cycle_events):
+    """Végrehajtja az aggregált megbízásokat."""
+    from modules.order_handler import _determine_position_idx # Késleltetett import a körkörös hivatkozás elkerülésére
 
+    logger.info(f"{len(orders)} db aggregált megbízás feldolgozása...")
+    for order in orders:
+        symbol = order['symbol']
+        side = order['side']
+        action = order['action']
+        qty = order['qty']
+
+        if qty <= 0: continue
+
+        qty_str = f"{qty:.{config['settings']['qty_precision']}f}"
+
+        if action == "OPEN":
+            is_increase = order['is_increase']
+            if not is_increase:
+                live_pos_resp = get_data(config['live_api'], "/v5/position/list", {'category': 'linear', 'symbol': symbol})
+                if live_pos_resp and live_pos_resp.get('list'):
+                    live_pos = live_pos_resp['list'][0]
+                    leverage = live_pos.get('leverage', '10')
+                    set_leverage_on_demo(config, symbol, leverage)
+                    time.sleep(0.5)
+
+            pos_idx = _determine_position_idx(config, side)
+            params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': False, 'orderType': 'Market', 'positionIdx': pos_idx}
+            if place_order_on_demo(config, params):
+                state_manager.map_position(symbol, side)
+                reporting_manager.update_activity_log("copy")
+                cycle_events.append({'type': 'open', 'data': {'symbol': symbol, 'side': side, 'qty': qty_str, 'is_increase': is_increase}})
+
+        elif action == "CLOSE":
+            position_side = order['position_side_for_close']
+            pos_idx = _determine_position_idx(config, position_side)
+            params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': True, 'orderType': 'Market', 'positionIdx': pos_idx}
+            if place_order_on_demo(config, params):
+                state_manager.remove_mapping(symbol, position_side)
+                time.sleep(1.5)
+                closed_pnl, daily_pnl = reporting_manager.get_pnl_update_after_close(config['demo_api'], symbol)
+                cycle_events.append({'type': 'close', 'data': {'symbol': symbol, 'side': position_side, 'qty': qty_str, 'pnl': closed_pnl, 'daily_pnl': daily_pnl}})
+
+        time.sleep(0.5)
 def update_config_value(section, option, value):
     """Frissíti a config.ini fájl egy adott értékét."""
     try:
@@ -84,10 +128,12 @@ def perform_interactive_setup(config_data):
         print("--- KONFIGURÁCIÓ FRISSÍTVE ---\n")
     else:
         print("\nA program a meglévő adatokkal folytatja.\n")
+# FÁJL: copyer.py - A teljes, javított main() funkció
 
 def main():
     config_data = load_configuration()
-    if not config_data: exit(1)
+    if not config_data:
+        exit(1)
         
     perform_interactive_setup(config_data)
 
@@ -100,7 +146,11 @@ def main():
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         sync_state_path = DATA_DIR / "sync_state.json"
         if sync_state_path.exists():
-            sync_state_path.unlink()
+            try:
+                sync_state_path.unlink()
+                logger.info("Régi 'sync_state.json' fájl törölve az induláskor.")
+            except OSError as e:
+                logger.warning(f"Nem sikerült törölni a 'sync_state.json' fájlt: {e}")
         
         send_telegram_message(config_data, f"🚀 *Trade Másoló Indul*\nVerzió: `{__version__}`")
         
@@ -117,17 +167,17 @@ def main():
             data_dir=DATA_DIR, version=__version__, config=config_data
         )
         
+        order_aggregator = OrderAggregator()
         activity_since_last_pnl_update = True
-        cycle_events = []
-
+        
         if state_manager.is_new_state():
-            activity_since_last_pnl_update = perform_initial_sync(config_data, state_manager, reporting_manager, cycle_events)
-        
-        if cycle_events:
-            summary_message = format_cycle_summary(cycle_events, __version__)
-            if summary_message:
-                send_telegram_message(config_data, summary_message)
-        
+            initial_events = []
+            activity_since_last_pnl_update = perform_initial_sync(config_data, state_manager, reporting_manager, initial_events)
+            if initial_events:
+                summary_message = format_cycle_summary(initial_events, __version__)
+                if summary_message:
+                    send_telegram_message(config_data, summary_message)
+
         while True:
             cycle_events = []
             
@@ -140,13 +190,22 @@ def main():
 
             logger.info("-" * 60)
             
-            if main_event_loop(config_data, state_manager, reporting_manager, cycle_events):
+            # Új események gyűjtése
+            if main_event_loop(config_data, state_manager, cycle_events, order_aggregator):
                  activity_since_last_pnl_update = True
 
+            # Aggregált megbízások feldolgozása
+            ready_orders = order_aggregator.get_ready_orders()
+            if ready_orders:
+                process_aggregated_orders(ready_orders, config_data, state_manager, reporting_manager, cycle_events)
+                activity_since_last_pnl_update = True
+
+            # Riportok frissítése
             reporting_manager.update_reports(pnl_update_needed=activity_since_last_pnl_update)
             if activity_since_last_pnl_update:
                 activity_since_last_pnl_update = False
 
+            # SL beállítása
             demo_positions_response = get_data(config_data['demo_api'], "/v5/position/list", {'category': 'linear', 'settleCoin': 'USDT'})
             if demo_positions_response and demo_positions_response.get('list'):
                 for pos in demo_positions_response['list']:
@@ -156,8 +215,10 @@ def main():
                             cycle_events.append({'type': 'sl', 'data': sl_event})
                         time.sleep(0.3)
 
+            # Szinkron ellenőrzés
             check_positions_sync(config_data, DATA_DIR)
 
+            # Ciklus végi összefoglaló küldése
             if cycle_events:
                 summary_message = format_cycle_summary(cycle_events, __version__)
                 if summary_message:
@@ -181,7 +242,6 @@ def main():
             bot_process.terminate()
             bot_process.join()
         logger.info("Fő program leállt.")
-
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     main()

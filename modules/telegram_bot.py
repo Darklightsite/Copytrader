@@ -1,3 +1,6 @@
+# FÁJL: modules/telegram_bot.py
+# VERZIÓ: Teljes, javított kód (parancsok törlésével)
+
 import logging
 import json
 import io
@@ -77,6 +80,17 @@ class TelegramBotManager:
             with open(file_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (json.JSONDecodeError, IOError): return default_data
+    
+    async def _delete_command_message(self, update: Update):
+        """Segédfunkció a parancsot tartalmazó üzenet törlésére."""
+        try:
+            await update.message.delete()
+        except BadRequest as e:
+            # Akkor hagyjuk figyelmen kívül, ha az üzenet már nem létezik.
+            if "message to delete not found" not in str(e).lower():
+                logger.warning(f"Nem sikerült törölni a parancsüzenetet (valószínűleg nincs admin jog): {e}")
+        except Exception as e:
+            logger.error(f"Hiba a parancsüzenet törlésekor: {e}", exc_info=True)
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_text = ("👋 *Szia! Elérhető parancsok:*\n\n"
@@ -84,6 +98,7 @@ class TelegramBotManager:
                      "`/pnl` - Összesített PnL riport\n"
                      "`/chart` - Interaktív egyenleggörbe")
         await update.message.reply_markdown(help_text)
+        await self._delete_command_message(update)
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("/status parancs fogadva.")
@@ -93,8 +108,10 @@ class TelegramBotManager:
             daily_stats = self._load_json_file(self.data_dir / "daily_stats.json")
             activity = self._load_json_file(self.data_dir / "activity.json")
             
+            await self._delete_command_message(update)
+
             if not status:
-                await update.message.reply_markdown("Hiba: `status.json` nem található.")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="Hiba: `status.json` nem található.", parse_mode='Markdown')
                 return
             
             live_daily_pnl = pnl_report.get("Élő", {}).get("periods", {}).get("Mai", {}).get("pnl", 0.0)
@@ -102,8 +119,8 @@ class TelegramBotManager:
 
             reply = (
                 f"✅ *Másoló v{status.get('version', 'N/A')}*\n"
-                f"Szinkronizáció: `{status.get('timestamp', 'N/A')}`\n"
-                f"Másolás: `{activity.get('last_copy_activity', 'N/A')}`\n\n"
+                f"Utolsó szinkronizáció: `{status.get('timestamp', 'N/A')}`\n"
+                f"Utolsó másolás: `{activity.get('last_copy_activity', 'N/A')}`\n\n"
                 f"🏦 *Egyenleg (Élő):* `${status.get('live_balance', 0.0):,.2f}`\n"
                 f"📈 *Nyitott PnL (Élő):* `${status.get('live_pnl', 0.0):,.2f}`\n"
                 f"💰 *Mai Zárt PnL (Élő):* `${live_daily_pnl:,.2f}`\n\n"
@@ -128,16 +145,18 @@ class TelegramBotManager:
                               f"  - Jelenlegi: `${current_drawdown:,.2f}`\n"
                               f"  - Fennmaradó: `${remaining_drawdown:,.2f}`")
             
-            await update.message.reply_markdown(reply, disable_notification=True)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=reply, parse_mode='Markdown', disable_notification=True)
         except Exception as e:
             logger.error(f"Hiba a /status parancs feldolgozása közben: {e}", exc_info=True)
-            await update.message.reply_text("Hiba a /status parancs végrehajtása során.")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Hiba a /status parancs végrehajtása során.")
 
     async def pnl_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("/pnl parancs fogadva.")
         pnl_data = self._load_json_file(self.data_dir / "pnl_report.json")
+        await self._delete_command_message(update)
+        
         if not pnl_data:
-            await update.message.reply_text("Nincsenek elérhető PnL adatok.")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Nincsenek elérhető PnL adatok.")
             return
 
         message = "📊 *Realizált PnL Jelentés* 📊\n\n"
@@ -153,11 +172,12 @@ class TelegramBotManager:
                         pnl_emoji = "📈" if pnl_value > 0 else "📉" if pnl_value < 0 else "➖"
                         message += f"  - `{period}`: {pnl_emoji} `${pnl_value:,.2f}` ({trade_count} trade)\n"
                 message += "\n"
-        await update.message.reply_markdown(message, disable_notification=True)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=message, parse_mode='Markdown', disable_notification=True)
     
     async def chart_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._delete_command_message(update)
         if not MATPLOTLIB_AVAILABLE:
-            await update.message.reply_text("Grafikon funkció nem elérhető: 'matplotlib' csomag hiányzik.")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Grafikon funkció nem elérhető: 'matplotlib' csomag hiányzik.")
             return ConversationHandler.END
         
         keyboard = [
@@ -165,7 +185,7 @@ class TelegramBotManager:
             [InlineKeyboardButton("Havi", callback_data='period_monthly'), InlineKeyboardButton("Összes", callback_data='period_all')],
             [InlineKeyboardButton("Mégse", callback_data='cancel')]
         ]
-        await update.message.reply_text('Milyen időszakról szeretnél grafikont?', reply_markup=InlineKeyboardMarkup(keyboard))
+        await context.bot.send_message(chat_id=update.effective_chat.id, text='Milyen időszakról szeretnél grafikont?', reply_markup=InlineKeyboardMarkup(keyboard))
         return self.SELECT_PERIOD
 
     async def select_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -228,15 +248,18 @@ class TelegramBotManager:
             ax.plot(x_indices, all_equity_values, color='#00aaff', linewidth=2)
             ax.fill_between(x_indices, all_equity_values, color='#00aaff', alpha=0.1)
             
-            num_ticks = min(len(x_indices), 8); tick_indices = [int(i) for i in _linspace(0, len(x_indices) - 1, num_ticks)]
-            tick_labels = [datetime.fromtimestamp(filtered[i]['time'], tz=timezone.utc).strftime('%m-%d\n%H:%M') for i in tick_indices]
-            ax.set_xticks(tick_indices); ax.set_xticklabels(tick_labels, rotation=0)
+            target_tz = timezone(timedelta(hours=2))
             
+            num_ticks = min(len(x_indices), 8); tick_indices = [int(i) for i in _linspace(0, len(x_indices) - 1, num_ticks)]
+            tick_labels = [datetime.fromtimestamp(filtered[i]['time'], tz=timezone.utc).astimezone(target_tz).strftime('%m-%d\n%H:%M') for i in tick_indices]
+            ax.set_xticks(tick_indices); ax.set_xticklabels(tick_labels, rotation=0)
+
             y_range = max_equity - min_equity; buffer = y_range * 0.1 or 1.0
             ax.set_ylim(min_equity - buffer, max_equity + buffer)
             
-            title_period = days_map.get(period)
-            title_period = f'Utolsó {title_period} nap' if title_period else 'Teljes időszak'
+            title_period_map = {'daily': 'Utolsó 24 óra', 'weekly': 'Utolsó 7 nap', 'monthly': 'Utolsó 30 nap'}
+            title_period = title_period_map.get(period, 'Teljes időszak')
+            
             ax.set_title(f'{account_display_name} Számla Egyenleggörbe - {title_period}', fontsize=16, color='white', pad=20)
             ax.set_ylabel('Tőke (USDT)', color='white'); ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray')
             ax.tick_params(axis='y', colors='white'); plt.setp(ax.spines.values(), color='gray')
@@ -256,7 +279,11 @@ class TelegramBotManager:
     async def back_to_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-        keyboard = [[InlineKeyboardButton("Napi", callback_data='period_daily'), InlineKeyboardButton("Heti", callback_data='period_weekly')],[InlineKeyboardButton("Havi", callback_data='period_monthly'), InlineKeyboardButton("Összes", callback_data='period_all')],[InlineKeyboardButton("Mégse", callback_data='cancel')]]
+        keyboard = [
+            [InlineKeyboardButton("Napi", callback_data='period_daily'), InlineKeyboardButton("Heti", callback_data='period_weekly')],
+            [InlineKeyboardButton("Havi", callback_data='period_monthly'), InlineKeyboardButton("Összes", callback_data='period_all')],
+            [InlineKeyboardButton("Mégse", callback_data='cancel')]
+        ]
         await query.edit_message_text('Milyen időszakról szeretnél grafikont?', reply_markup=InlineKeyboardMarkup(keyboard))
         return self.SELECT_PERIOD
 

@@ -19,6 +19,8 @@ class ReportingManager:
         self.activity_file = self.data_dir / "activity.json" # Hozzáadva a hiányzó definíció
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.pnl_cache = {}
+        self.live_chart_file = self.data_dir / "live_chart_data.json"
+        self.demo_chart_file = self.data_dir / "demo_chart_data.json"
 
     def _load_json(self, file_path, default_data=None):
         if default_data is None: default_data = {}
@@ -31,6 +33,35 @@ class ReportingManager:
         try:
             with open(file_path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4, ensure_ascii=False)
         except IOError as e: logger.error(f"Hiba a(z) {file_path} írása közben: {e}")
+    def _update_chart_data(self, account_data):
+        """Hozzáadja az aktuális egyenleg adatpontot a megfelelő chart fájlhoz."""
+        account_name = account_data.get('name')
+        if not account_name:
+            return
+
+        file_path = self.live_chart_file if account_name == "Élő" else self.demo_chart_file
+        
+        try:
+            chart_data = self._load_json(file_path, default_data=[])
+            
+            new_point = {
+                "time": int(time.time()),
+                "value": round(account_data.get('balance', 0), 4)
+            }
+
+            # Optimalizálás: Ne adjunk hozzá új pontot, ha az utolsó túl közeli
+            # és az érték nem változott.
+            if chart_data:
+                last_point = chart_data[-1]
+                if new_point['time'] - last_point.get('time', 0) < 60 and new_point['value'] == last_point.get('value'):
+                    return # Nincs szükség frissítésre
+
+            chart_data.append(new_point)
+            self._save_json(file_path, chart_data)
+            logger.info(f"Chart adatok frissítve a(z) '{account_name}' fiókhoz. Fájl: {file_path.name}")
+
+        except Exception as e:
+            logger.error(f"Hiba a chart adatok frissítése közben ({file_path.name}): {e}", exc_info=True)
 
     # --- JAVÍTÁS: A hiányzó függvény visszahelyezve ---
     def update_activity_log(self, activity_type="copy"):
@@ -63,13 +94,20 @@ class ReportingManager:
         self._save_json(self.daily_stats_file, stats)
 
     def update_reports(self, pnl_update_needed=False):
-        logger.info("Riportok frissítése...")
-        live_account_data = self._get_account_data(self.live_api, "Élő", pnl_update_needed)
-        demo_account_data = self._get_account_data(self.demo_api, "Demó", pnl_update_needed)
-        self._update_daily_stats(demo_account_data)
-        self._update_status_report(live_account_data, demo_account_data)
-        if pnl_update_needed: self._update_pnl_report(live_account_data, demo_account_data)
-
+            """Frissíti az összes riportot: státusz, PnL, napi statisztikák és chart adatok."""
+            logger.info("Riportok frissítése...")
+            live_account_data = self._get_account_data(self.live_api, "Élő", pnl_update_needed)
+            demo_account_data = self._get_account_data(self.demo_api, "Demó", pnl_update_needed)
+            
+            # Chart adatok frissítése (minden ciklusban)
+            self._update_chart_data(live_account_data)
+            self._update_chart_data(demo_account_data)
+            
+            # Egyéb riportok frissítése
+            self._update_daily_stats(demo_account_data)
+            self._update_status_report(live_account_data, demo_account_data)
+            if pnl_update_needed:
+                self._update_pnl_report(live_account_data, demo_account_data)
     def _fetch_history_in_chunks(self, api, endpoint, **extra_params):
         """Stabil, 7 napos blokkokban történő lekérdezési logika."""
         all_records = []

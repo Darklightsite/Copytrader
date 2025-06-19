@@ -83,32 +83,38 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
 
     logger.info("KEZDETI SZINKRONIZÁCIÓ BEFEJEZVE!")
     return activity_detected
+# FÁJL: modules/sync_logic.py (CSAK a main_event_loop funkciót kell cserélni)
 
-def main_event_loop(config_data, state_manager, reporting_manager, cycle_events):
-    """A fő eseményfigyelő ciklus, ami az új kötéseket keresi és eseményeket gyűjt."""
+# ... (a fájl többi része változatlan)
+
+def main_event_loop(config_data, state_manager, cycle_events, order_aggregator):
+    """
+    A fő eseményfigyelő ciklus. Az új kötéseket keresi, és átadja őket
+    az order_aggregator-nak ahelyett, hogy azonnal végrehajtaná.
+    """
     logger.info("Új kereskedési események keresése...")
-    activity_detected = False
     last_known_id = state_manager.get_last_id()
     if not last_known_id:
-        return activity_detected
+        logger.warning("Nincs utolsó esemény ID, a ciklus kihagyva. Kezdeti szinkronra lehet szükség.")
+        return False
 
     recent_fills_data = get_data(config_data['live_api'], "/v5/execution/list", {"category": "linear", "limit": 100})
     if not recent_fills_data or not recent_fills_data.get('list'):
-        return activity_detected
+        return False
 
     recent_fills = recent_fills_data['list']
     new_fills_to_process = []
     for fill in recent_fills:
-        if fill['execId'] == last_known_id: break
+        if fill['execId'] == last_known_id:
+            break
         new_fills_to_process.append(fill)
 
     if not new_fills_to_process:
         logger.info("Nincs új esemény az utolsó feldolgozás óta.")
-        return activity_detected
+        return False
         
     activity_detected = True
-    multiplier = Decimal(str(config_data['settings']['copy_multiplier']))
-    qty_precision = config_data['settings']['qty_precision']
+    logger.info(f"{len(new_fills_to_process)} új esemény észlelve, átadva az aggregátornak.")
 
     for fill in reversed(new_fills_to_process):
         symbol, side, exec_qty_str = fill['symbol'], fill['side'], fill['execQty']
@@ -119,39 +125,36 @@ def main_event_loop(config_data, state_manager, reporting_manager, cycle_events)
             logger.info(f"Esemény kihagyva: {symbol} ({exec_type}), nem Trade típusú.")
             continue
         
+        # Szűrés a configban megadott szimbólumokra (ha van ilyen)
         if config_data['settings'].get('symbols_to_copy') and symbol not in config_data['settings']['symbols_to_copy']:
             continue
 
+        # ZÁRÁS ESEMÉNY
         if float(closed_size_str) > 0:
             position_side = "Sell" if side == "Buy" else "Buy"
             if state_manager.is_position_mapped(symbol, position_side):
-                demo_qty = (Decimal(closed_size_str) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
-                pos_idx = _determine_position_idx(config_data, position_side)
-                params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': str(demo_qty), 'reduceOnly': True, 'orderType': 'Market', 'positionIdx': pos_idx}
-                if place_order_on_demo(config_data, params):
-                    state_manager.remove_mapping(symbol, position_side)
-                    time.sleep(1.5)
-                    closed_pnl, daily_pnl = reporting_manager.get_pnl_update_after_close(config_data['demo_api'], symbol)
-                    cycle_events.append({'type': 'close', 'data': {'symbol': symbol, 'side': position_side, 'qty': str(demo_qty), 'pnl': closed_pnl, 'daily_pnl': daily_pnl}})
+                fill_data = {
+                    'symbol': symbol,
+                    'side': side,  # A záró megbízás iránya (pl. Buy-al zárunk egy Sell pozíciót)
+                    'qty': closed_size_str,
+                    'action': 'CLOSE',
+                    'position_side_for_close': position_side  # Az eredeti pozíció iránya
+                }
+                order_aggregator.add_fill(fill_data)
+        # NYITÁS VAGY NÖVELÉS ESEMÉNY
         else:
             is_increase = state_manager.is_position_mapped(symbol, side)
-            if not is_increase:
-                live_positions_resp = get_data(config_data['live_api'], "/v5/position/list", {'category': 'linear', 'symbol': symbol})
-                if live_positions_resp and live_positions_resp.get('list'):
-                    live_pos = live_positions_resp['list'][0]
-                    leverage = live_pos.get('leverage', '10')
-                    set_leverage_on_demo(config_data, symbol, leverage)
-                    time.sleep(0.5)
+            fill_data = {
+                'symbol': symbol,
+                'side': side,
+                'qty': exec_qty_str,
+                'action': 'OPEN',
+                'is_increase': is_increase
+            }
+            order_aggregator.add_fill(fill_data)
 
-            demo_qty = (Decimal(exec_qty_str) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
-            if demo_qty <= 0: continue
-            
-            pos_idx = _determine_position_idx(config_data, side)
-            params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': str(demo_qty), 'reduceOnly': False, 'orderType': 'Market', 'positionIdx': pos_idx}
-            if place_order_on_demo(config_data, params):
-                state_manager.map_position(symbol, side)
-                reporting_manager.update_activity_log("copy")
-                cycle_events.append({'type': 'open', 'data': {'symbol': symbol, 'side': side, 'qty': str(demo_qty), 'is_increase': is_increase}})
-
+    # A legfrissebb esemény ID-jének mentése
     state_manager.set_last_id(recent_fills[0]['execId'])
     return activity_detected
+
+# ... (a fájl többi része változatlan)
