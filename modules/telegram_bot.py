@@ -1,5 +1,4 @@
 # FÁJL: modules/telegram_bot.py
-# VERZIÓ: Teljes, javított kód (parancsok törlésével)
 
 import logging
 import json
@@ -7,6 +6,8 @@ import io
 import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+# JAVÍTÁS: multiprocessing.Event importálása a típus-ellenőrzéshez
+from multiprocessing import Event
 
 try:
     from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -20,6 +21,7 @@ except ImportError:
         class DEFAULT_TYPE: pass
     class ConversationHandler:
         END = -1
+    class Event: pass # Placeholder ha a multiprocessing nincs betöltve
 
 try:
     import matplotlib
@@ -40,12 +42,15 @@ def _linspace(start, stop, num):
     return [start + step * i for i in range(num)]
 
 class TelegramBotManager:
-    def __init__(self, token, config, data_dir: Path):
+    # JAVÍTÁS: __init__ fogadja a sync_trigger eseményt
+    def __init__(self, token, config, data_dir: Path, sync_trigger: Event):
         if not TELEGRAM_LIBS_AVAILABLE:
             raise ImportError("A 'python-telegram-bot' csomag nincs telepítve.")
         self.token, self.config, self.data_dir = token, config, data_dir
         self.app = Application.builder().token(self.token).build()
         self.SELECT_PERIOD, self.SELECT_ACCOUNT = range(2)
+        # JAVÍTÁS: Az esemény tárolása
+        self.sync_trigger = sync_trigger
         self._register_handlers()
 
     def _register_handlers(self):
@@ -86,7 +91,6 @@ class TelegramBotManager:
         try:
             await update.message.delete()
         except BadRequest as e:
-            # Akkor hagyjuk figyelmen kívül, ha az üzenet már nem létezik.
             if "message to delete not found" not in str(e).lower():
                 logger.warning(f"Nem sikerült törölni a parancsüzenetet (valószínűleg nincs admin jog): {e}")
         except Exception as e:
@@ -302,19 +306,22 @@ class TelegramBotManager:
         action = query.data.split(":")[1]
         try:
             if query.message.caption:
-                await query.edit_message_caption(caption=f"Parancs fogadva: {action}.")
+                await query.edit_message_caption(caption=f"Parancs fogadva: {action}. A következő ciklus azonnal elindul.")
             else:
-                await query.edit_message_text(text=f"Parancs fogadva: {action}.")
+                await query.edit_message_text(text=f"Parancs fogadva: {action}. A következő ciklus azonnal elindul.")
         except BadRequest as e:
             if "message is not modified" not in str(e).lower(): 
                 logger.error(f"Telegram BadRequest hiba: {e}")
-        handle_sync_action(action, self.config, self.data_dir)
+        # JAVÍTÁS: Átadjuk a sync_trigger eseményt a handle_sync_action-nek
+        handle_sync_action(action, self.config, self.data_dir, self.sync_trigger)
 
-def run_bot_process(token: str, config: dict, data_dir: Path):
+# JAVÍTÁS: run_bot_process fogadja a sync_trigger eseményt
+def run_bot_process(token: str, config: dict, data_dir: Path, sync_trigger: Event):
     from .logger_setup import setup_logging
     setup_logging(config, log_dir=(data_dir / "logs"))
     try:
-        bot_manager = TelegramBotManager(token=token, config=config, data_dir=data_dir)
+        # JAVÍTÁS: Átadjuk az eseményt a managernek
+        bot_manager = TelegramBotManager(token=token, config=config, data_dir=data_dir, sync_trigger=sync_trigger)
         bot_manager.run()
     except ImportError as e:
         logger.warning(f"A Telegram bot nem indul el: {e}")

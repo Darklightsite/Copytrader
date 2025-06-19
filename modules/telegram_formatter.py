@@ -7,7 +7,8 @@ def format_qty(qty_str: str) -> str:
         if num == int(num):
             return str(int(num))
         else:
-            return f"{num:.4f}".rstrip('0').rstrip('.')
+            # Biztonságos formázás, amely elkerüli a tudományos jelölést
+            return f"{num:.8f}".rstrip('0').rstrip('.')
     except (ValueError, TypeError):
         return qty_str
 
@@ -34,10 +35,20 @@ def format_cycle_summary(events: list, version: str) -> str:
             
         elif event_type == 'close':
             symbol, side, qty = data.get('symbol'), data.get('side', ''), format_qty(data.get('qty', '0'))
-            pnl, daily_pnl = data.get('pnl'), data.get('daily_pnl')+data.get('pnl')
+            
+            # --- JAVÍTÁS ---
+            # Közvetlenül lekérjük az értékeket, és kezeljük a None esetet.
+            # A 'daily_pnl' már a teljes napi PnL-t tartalmazza, a duplikált összeadást eltávolítjuk.
+            pnl = data.get('pnl') # Ez lehet None
+            daily_pnl = data.get('daily_pnl') # Ez a reporting.py alapján mindig float vagy 0
 
-            pnl_str = f"Trade PnL: `${pnl:,.2f}`" if pnl is not None else ""
-            daily_pnl_str = f" | Mai PnL: `${daily_pnl:,.2f}`" if daily_pnl is not None else ""
+            # Biztonsági ellenőrzés, ha a napi pnl valamiért None lenne
+            if daily_pnl is None:
+                daily_pnl = 0.0
+
+            pnl_str = f"Trade PnL: `${pnl:,.2f}`" if pnl is not None else "Trade PnL: $N/A"
+            daily_pnl_str = f" | Mai PnL: `${daily_pnl:,.2f}`"
+            
             pnl_emoji = "✅" if (pnl or 0) > 0 else "❌" if (pnl or 0) < 0 else "➖"
 
             sections["closed"] += f"  - `{symbol}` ({side}): Zárva. {pnl_emoji} {pnl_str}{daily_pnl_str}\n"
@@ -50,6 +61,7 @@ def format_cycle_summary(events: list, version: str) -> str:
     final_message = header
     has_content = False
     for key, content in sections.items():
+        # Csak akkor adjuk hozzá a szekciót, ha van tartalma (a fejlécen kívül)
         if len(content.splitlines()) > 1:
             final_message += content + "\n"
             has_content = True

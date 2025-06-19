@@ -83,24 +83,22 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
 
     logger.info("KEZDETI SZINKRONIZÁCIÓ BEFEJEZVE!")
     return activity_detected
-# FÁJL: modules/sync_logic.py (CSAK a main_event_loop funkciót kell cserélni)
 
-# ... (a fájl többi része változatlan)
-
-def main_event_loop(config_data, state_manager, cycle_events, order_aggregator):
+def main_event_loop(config_data, state_manager, order_aggregator):
     """
     A fő eseményfigyelő ciklus. Az új kötéseket keresi, és átadja őket
-    az order_aggregator-nak ahelyett, hogy azonnal végrehajtaná.
+    az order_aggregator-nak. Visszaadja, hogy történt-e aktivitás, és
+    az utolsó esemény ID-ját, amit a ciklus végén kell menteni.
     """
     logger.info("Új kereskedési események keresése...")
     last_known_id = state_manager.get_last_id()
     if not last_known_id:
         logger.warning("Nincs utolsó esemény ID, a ciklus kihagyva. Kezdeti szinkronra lehet szükség.")
-        return False
+        return False, None
 
     recent_fills_data = get_data(config_data['live_api'], "/v5/execution/list", {"category": "linear", "limit": 100})
     if not recent_fills_data or not recent_fills_data.get('list'):
-        return False
+        return False, None
 
     recent_fills = recent_fills_data['list']
     new_fills_to_process = []
@@ -109,12 +107,15 @@ def main_event_loop(config_data, state_manager, cycle_events, order_aggregator):
             break
         new_fills_to_process.append(fill)
 
+    # JAVÍTÁS: Módosított visszatérési értékek a robusztus állapotkezeléshez
     if not new_fills_to_process:
         logger.info("Nincs új esemény az utolsó feldolgozás óta.")
-        return False
+        return False, None
         
     activity_detected = True
-    logger.info(f"{len(new_fills_to_process)} új esemény észlelve, átadva az aggregátornak.")
+    # A legfrissebb esemény ID-ja, amit a hívó majd elment, ha a ciklus sikeres volt
+    last_id_to_save = recent_fills[0]['execId']
+    logger.info(f"{len(new_fills_to_process)} új esemény észlelve, átadva az aggregátornak. Új last_id jelölt: {last_id_to_save}")
 
     for fill in reversed(new_fills_to_process):
         symbol, side, exec_qty_str = fill['symbol'], fill['side'], fill['execQty']
@@ -152,9 +153,6 @@ def main_event_loop(config_data, state_manager, cycle_events, order_aggregator):
                 'is_increase': is_increase
             }
             order_aggregator.add_fill(fill_data)
-
-    # A legfrissebb esemény ID-jének mentése
-    state_manager.set_last_id(recent_fills[0]['execId'])
-    return activity_detected
-
-# ... (a fájl többi része változatlan)
+    
+    # JAVÍTÁS: Az ID mentését a fő ciklusra bízzuk, itt csak visszaadjuk
+    return activity_detected, last_id_to_save

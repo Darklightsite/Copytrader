@@ -1,4 +1,4 @@
-# FÁJL: modules/sync_checker.py (Teljes, javított fájl)
+# FÁJL: modules/sync_checker.py
 
 import logging
 import json
@@ -6,9 +6,10 @@ import time
 from decimal import Decimal
 from pathlib import Path
 from datetime import datetime
+# JAVÍTÁS: multiprocessing.Event importálása a típus-ellenőrzéshez
+from multiprocessing import Event
 
 from .api_handler import get_data
-# --- JAVÍTÁS: A send_telegram_message importálása ---
 from .telegram_sender import send_telegram_document, send_telegram_message
 from .order_handler import place_order_on_demo, _determine_position_idx
 
@@ -30,7 +31,8 @@ def _save_sync_state(state, sync_state_path):
     except IOError as e: 
         logger.error(f"Hiba a {sync_state_path} írása közben: {e}")
 
-def check_positions_sync(config_data, data_dir):
+# JAVÍTÁS: A függvény most már megkapja a sync_trigger eseményt is
+def check_positions_sync(config_data, data_dir, sync_trigger: Event):
     sync_state_path = data_dir / "sync_state.json"
     state = _load_sync_state(sync_state_path)
     if state.get("waiting_for_reply"):
@@ -95,7 +97,8 @@ def send_sync_issue_report(config_data, discrepancies, data_dir):
     ]
     send_telegram_document(config_data, report_path, caption, buttons)
 
-def handle_sync_action(action, config_data, data_dir):
+# JAVÍTÁS: A függvény most már megkapja a sync_trigger eseményt
+def handle_sync_action(action: str, config_data: dict, data_dir: Path, sync_trigger: Event):
     sync_state_path = data_dir / "sync_state.json"
     logger.info(f"Felhasználói szinkronizációs parancs érkezett: {action}")
     state = _load_sync_state(sync_state_path)
@@ -110,6 +113,11 @@ def handle_sync_action(action, config_data, data_dir):
         
     _save_sync_state(state, sync_state_path)
     send_telegram_message(config_data, message)
+
+    # JAVÍTÁS: Jelzés a fő ciklusnak, hogy azonnal induljon
+    if sync_trigger:
+        logger.info("Azonnali ciklusindítás jelzése a fő processznek...")
+        sync_trigger.set()
 
 def execute_pending_sync_actions(config_data, state_manager, reporting_manager, data_dir):
     sync_state_path = data_dir / "sync_state.json"
@@ -161,4 +169,4 @@ def execute_pending_sync_actions(config_data, state_manager, reporting_manager, 
     _save_sync_state({"waiting_for_reply": False, "discrepancies": [], "pending_action": None}, sync_state_path)
     logger.info("Függőben lévő szinkronizációs művelet befejezve.")
     send_telegram_message(config_data, "✅ A fiókok közötti szinkronizálás befejeződött.")
-    return True # Jelezzük a fő ciklusnak, hogy történt aktivitás
+    return True
