@@ -2,7 +2,7 @@
 
 import time
 import logging
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 
 from .api_handler import get_data
 from .order_handler import place_order_on_demo, set_leverage_on_demo, _determine_position_idx
@@ -13,6 +13,7 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
     """
     A program indulásakor végzi el a kezdeti szinkronizációt.
     Beállítja a tőkeáttételt, szinkronizálja a pozíciókat és gyűjti az eseményeket.
+    Már itt is figyelembe veszi a szorzót.
     """
     logger.info("=" * 60)
     logger.info("KEZDETI SZINKRONIZÁCIÓ INDUL...")
@@ -41,13 +42,14 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
             activity_detected = True
             pos_idx = _determine_position_idx(config_data, demo_pos['side'])
             close_params = {'category': 'linear', 'symbol': demo_pos['symbol'], 'side': 'Sell' if demo_pos['side'] == 'Buy' else 'Buy', 'qty': demo_pos['size'], 'reduceOnly': True, 'positionIdx': pos_idx, 'orderType': 'Market'}
-            if place_order_on_demo(config_data, close_params):
+            if place_order_on_demo(config_data, close_params)[0]:
                 cycle_events.append({'type': 'close', 'data': {'symbol': demo_pos['symbol'], 'side': demo_pos['side'], 'qty': demo_pos['size'], 'pnl': None, 'daily_pnl': None}})
             time.sleep(0.5)
 
     # Hiányzó vagy méreteltéréses pozíciók korrekciója
     for pos_id, live_pos in live_positions.items():
-        expected_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
+        # JAVÍTÁS: A szorzó és a kerekítés alkalmazása
+        expected_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)), rounding=ROUND_DOWN)
         pos_idx = _determine_position_idx(config_data, live_pos['side'])
         
         leverage = live_pos.get('leverage', '10')
@@ -63,11 +65,11 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
                 close_params = {'category': 'linear', 'symbol': live_pos['symbol'], 'side': 'Sell' if live_pos['side'] == 'Buy' else 'Buy', 'qty': str(actual_qty), 'reduceOnly': True, 'positionIdx': pos_idx, 'orderType': 'Market'}
                 place_order_on_demo(config_data, close_params)
                 time.sleep(1)
-                if place_order_on_demo(config_data, open_params):
+                if place_order_on_demo(config_data, open_params)[0]:
                     cycle_events.append({'type': 'open', 'data': {'symbol': live_pos['symbol'], 'side': live_pos['side'], 'qty': str(expected_qty), 'is_increase': True}})
         else:
             activity_detected = True
-            if place_order_on_demo(config_data, open_params):
+            if place_order_on_demo(config_data, open_params)[0]:
                 cycle_events.append({'type': 'open', 'data': {'symbol': live_pos['symbol'], 'side': live_pos['side'], 'qty': str(expected_qty), 'is_increase': False}})
 
         state_manager.map_position(live_pos['symbol'], live_pos['side'])
@@ -86,15 +88,19 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
 
 def main_event_loop(config_data, state_manager, order_aggregator):
     """
-    A fő eseményfigyelő ciklus. Az új kötéseket keresi, és átadja őket
-    az order_aggregator-nak. Visszaadja, hogy történt-e aktivitás, és
-    az utolsó esemény ID-ját, amit a ciklus végén kell menteni.
+    A fő eseményfigyelő ciklus. Az új kötéseket a szorzóval korrigált
+    mennyiséggel adja át az aggregátornak.
     """
     logger.info("Új kereskedési események keresése...")
     last_known_id = state_manager.get_last_id()
     if not last_known_id:
         logger.warning("Nincs utolsó esemény ID, a ciklus kihagyva. Kezdeti szinkronra lehet szükség.")
         return False, None
+
+    # JAVÍTÁS: Szorzó és pontosság beolvasása a ciklus elején
+    multiplier = Decimal(str(config_data['settings'].get('copy_multiplier', 1.0)))
+    qty_precision = config_data['settings'].get('qty_precision', 4)
+    logger.info(f"Aktuális szorzó: {multiplier}, Mennyiség pontosság: {qty_precision}")
 
     recent_fills_data = get_data(config_data['live_api'], "/v5/execution/list", {"category": "linear", "limit": 100})
     if not recent_fills_data or not recent_fills_data.get('list'):
@@ -107,13 +113,11 @@ def main_event_loop(config_data, state_manager, order_aggregator):
             break
         new_fills_to_process.append(fill)
 
-    # JAVÍTÁS: Módosított visszatérési értékek a robusztus állapotkezeléshez
     if not new_fills_to_process:
         logger.info("Nincs új esemény az utolsó feldolgozás óta.")
         return False, None
         
     activity_detected = True
-    # A legfrissebb esemény ID-ja, amit a hívó majd elment, ha a ciklus sikeres volt
     last_id_to_save = recent_fills[0]['execId']
     logger.info(f"{len(new_fills_to_process)} új esemény észlelve, átadva az aggregátornak. Új last_id jelölt: {last_id_to_save}")
 
@@ -126,33 +130,43 @@ def main_event_loop(config_data, state_manager, order_aggregator):
             logger.info(f"Esemény kihagyva: {symbol} ({exec_type}), nem Trade típusú.")
             continue
         
-        # Szűrés a configban megadott szimbólumokra (ha van ilyen)
         if config_data['settings'].get('symbols_to_copy') and symbol not in config_data['settings']['symbols_to_copy']:
             continue
 
-        # ZÁRÁS ESEMÉNY
         if float(closed_size_str) > 0:
             position_side = "Sell" if side == "Buy" else "Buy"
             if state_manager.is_position_mapped(symbol, position_side):
+                # JAVÍTÁS: Szorzó és kerekítés alkalmazása a zárási mennyiségre
+                live_qty = Decimal(closed_size_str)
+                demo_qty = (live_qty * multiplier).quantize(Decimal('1e-' + str(qty_precision)), rounding=ROUND_DOWN)
+                if demo_qty == 0:
+                    logger.warning(f"A szorzóval csökkentett zárási mennyiség 0-ra kerekedett. Eredeti: {live_qty}, Szorzó: {multiplier}. A megbízás kihagyva.")
+                    continue
+
                 fill_data = {
                     'symbol': symbol,
-                    'side': side,  # A záró megbízás iránya (pl. Buy-al zárunk egy Sell pozíciót)
-                    'qty': closed_size_str,
+                    'side': side,
+                    'qty': str(demo_qty),
                     'action': 'CLOSE',
-                    'position_side_for_close': position_side  # Az eredeti pozíció iránya
+                    'position_side_for_close': position_side
                 }
                 order_aggregator.add_fill(fill_data)
-        # NYITÁS VAGY NÖVELÉS ESEMÉNY
         else:
             is_increase = state_manager.is_position_mapped(symbol, side)
+            # JAVÍTÁS: Szorzó és kerekítés alkalmazása a nyitási/növelési mennyiségre
+            live_qty = Decimal(exec_qty_str)
+            demo_qty = (live_qty * multiplier).quantize(Decimal('1e-' + str(qty_precision)), rounding=ROUND_DOWN)
+            if demo_qty == 0:
+                logger.warning(f"A szorzóval csökkentett nyitási mennyiség 0-ra kerekedett. Eredeti: {live_qty}, Szorzó: {multiplier}. A megbízás kihagyva.")
+                continue
+                
             fill_data = {
                 'symbol': symbol,
                 'side': side,
-                'qty': exec_qty_str,
+                'qty': str(demo_qty),
                 'action': 'OPEN',
                 'is_increase': is_increase
             }
             order_aggregator.add_fill(fill_data)
-    
-    # JAVÍTÁS: Az ID mentését a fő ciklusra bízzuk, itt csak visszaadjuk
+
     return activity_detected, last_id_to_save

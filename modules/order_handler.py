@@ -4,15 +4,22 @@ import logging
 import time
 from decimal import Decimal
 from .api_handler import get_data, make_api_request, get_instrument_info
-# A hibát okozó "from .sync_logic import..." sor innen törölve
 
 logger = logging.getLogger()
 
 def _determine_position_idx(config_data, side):
     """Meghatározza a pozíciós indexet a config.ini beállításai alapján."""
     demo_mode = config_data.get('account_modes', {}).get('demo_mode', 'Oneway')
+    
+    # JAVÍTÁS: Részletes naplózás a hibakereséshez
+    logger.info(f"positionIdx meghatározása: demo_mode='{demo_mode}', side='{side}'")
+    
     if demo_mode.strip().capitalize() == 'Hedge':
-        return 1 if side == 'Buy' else 2
+        idx = 1 if side == 'Buy' else 2
+        logger.info(f"Hedge mód aktív, pozíció index: {idx}")
+        return idx
+    
+    logger.info("One-way mód aktív, pozíció index: 0")
     return 0
 
 def set_leverage_on_demo(config_data, symbol: str, leverage: str):
@@ -45,15 +52,50 @@ def close_all_demo_positions(config_data):
             time.sleep(0.5)
 
 def place_order_on_demo(config_data, params):
+    """
+    Robusztus megbízás küldési és ellenőrzési funkció.
+    Létrehozza a megbízást, majd visszaellenőrzi annak státuszát a tőzsdén.
+    """
     symbol = params.get('symbol', 'N/A')
     side = params.get('side', 'N/A')
     qty = params.get('qty', 'N/A')
     logger.info(f"MEGBÍZÁS KÜLDÉSE: {symbol} | {side} | {qty}")
+    
     response = make_api_request(config_data['demo_api'], "/v5/order/create", "POST", params)
-    if response and response.get("retCode") == 0:
+    
+    if not response or response.get("retCode") != 0:
+        ret_msg = response.get('retMsg', "Ismeretlen hiba") if response else "Nincs válasz az API-tól"
+        logger.error(f"❌ MEGBÍZÁS LÉTREHOZÁSA SIKERTELEN! Hiba: {ret_msg} (Kód: {response.get('retCode')})")
+        return False
+        
+    order_id = response.get('result', {}).get('orderId')
+    if not order_id:
+        logger.warning(f"A megbízás létrehozása sikeresnek tűnt, de nem kaptunk orderId-t. Ellenőrzés szükséges. Válasz: {response}")
         return True
-    ret_msg = response.get('retMsg', "Ismeretlen hiba") if response else "Nincs válasz"
-    logger.error(f"❌ MEGBÍZÁS SIKERTELEN! Hiba: {ret_msg}")
+
+    time.sleep(1.5) 
+    
+    for i in range(4): # Max 4 próba (kb. 7-8 másodperc) az order státuszának ellenőrzésére
+        query_params = {'category': 'linear', 'orderId': order_id}
+        order_status_resp = get_data(config_data['demo_api'], '/v5/order/history', query_params)
+        
+        if order_status_resp and order_status_resp.get('list'):
+            order_info = order_status_resp['list'][0]
+            status = order_info.get('orderStatus')
+            logger.info(f"Order {order_id} státusz ellenőrzése ({i+1}. próba): {status}")
+            
+            if status in ['Filled', 'PartiallyFilled']:
+                logger.info(f"✅ MEGBÍZÁS SIKERESEN TELJESÜLT ({status}). Order ID: {order_id}")
+                return True
+            elif status in ['Cancelled', 'Rejected']:
+                logger.error(f"❌ MEGBÍZÁS ELUTASÍTVA/TÖRÖLVE. Státusz: {status}. Order ID: {order_id}")
+                return False
+        
+        if i < 3:
+            logger.warning(f"Order státusz még nem végleges. Újrapróbálkozás 2 másodperc múlva...")
+            time.sleep(2)
+
+    logger.error(f"❌ MEGBÍZÁS VÉGLEGES STÁTUSZÁT NEM SIKERÜLT MEGERŐSÍTENI a határidőn belül. Order ID: {order_id}")
     return False
 
 def check_and_set_sl(position, config_data):

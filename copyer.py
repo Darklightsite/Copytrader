@@ -7,10 +7,6 @@ import configparser
 import requests
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-
-# JAVÍTÁS: multiprocessing.Event importálása a processzek közötti jelzéshez
-from multiprocessing import Event
-
 from modules.order_aggregator import OrderAggregator
 from modules.order_handler import place_order_on_demo, set_leverage_on_demo
 from decimal import Decimal
@@ -22,10 +18,10 @@ from modules.sync_logic import perform_initial_sync, main_event_loop
 from modules.order_handler import check_and_set_sl, close_all_demo_positions
 from modules.api_handler import get_data
 from modules.telegram_sender import send_telegram_message
-from modules.sync_checker import execute_pending_sync_actions, check_positions_sync
+from modules.sync_checker import check_positions_sync
 from modules.telegram_formatter import format_cycle_summary
 
-__version__ = "14.4.0 (Azonnali Szinkron)"
+__version__ = "14.7.2 (Logikai Sorrend Javítva)"
 
 logger = logging.getLogger()
 
@@ -36,18 +32,38 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
     from modules.order_handler import _determine_position_idx 
 
     logger.info(f"{len(orders)} db aggregált megbízás feldolgozása...")
-    for order in orders:
+    
+    symbols_in_batch = {o['symbol'] for o in orders}
+    close_reopen_pairs = set()
+    for symbol in symbols_in_batch:
+        actions = {o['action'] for o in orders if o['symbol'] == symbol}
+        if 'CLOSE' in actions and 'OPEN' in actions:
+            close_reopen_pairs.add(symbol)
+    
+    if close_reopen_pairs:
+        logger.info(f"Zárás-újraindítás szekvenciák észlelve: {list(close_reopen_pairs)}. Extra várakozás lesz alkalmazva a nyitások előtt.")
+
+    for i, order in enumerate(orders):
+        logger.info(f"--- Aggregált megbízás feldolgozása ({i+1}/{len(orders)}) ---")
         symbol = order['symbol']
         side = order['side']
         action = order['action']
         qty = order['qty']
+        
+        logger.info(f"Adatok: Szimbólum={symbol}, Akció={action}, Irány={side}, Mennyiség={qty}")
 
-        if qty <= 0: continue
+        if action == 'OPEN' and symbol in close_reopen_pairs:
+            logger.info(f"Extra várakozás (3 mp) a(z) {symbol} újraindítása előtt a tőzsdei állapot frissülése miatt.")
+            time.sleep(3)
+
+        if qty <= 0:
+            logger.warning("Mennyiség nulla vagy kevesebb, megbízás kihagyva.")
+            continue
 
         qty_str = f"{qty:.{config['settings']['qty_precision']}f}"
 
         if action == "OPEN":
-            is_increase = order['is_increase']
+            is_increase = order.get('is_increase', False)
             if not is_increase:
                 live_pos_resp = get_data(config['live_api'], "/v5/position/list", {'category': 'linear', 'symbol': symbol})
                 if live_pos_resp and live_pos_resp.get('list'):
@@ -58,7 +74,9 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
 
             pos_idx = _determine_position_idx(config, side)
             params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': False, 'orderType': 'Market', 'positionIdx': pos_idx}
-            if place_order_on_demo(config, params):
+            
+            logger.info(f"OPEN parancs előkészítve. Paraméterek: {params}")
+            if place_order_on_demo(config, params)[0]:
                 state_manager.map_position(symbol, side)
                 reporting_manager.update_activity_log("copy")
                 cycle_events.append({'type': 'open', 'data': {'symbol': symbol, 'side': side, 'qty': qty_str, 'is_increase': is_increase}})
@@ -67,19 +85,16 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
             position_side = order['position_side_for_close']
             pos_idx = _determine_position_idx(config, position_side)
             params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': True, 'orderType': 'Market', 'positionIdx': pos_idx}
-            if place_order_on_demo(config, params):
+            
+            logger.info(f"CLOSE parancs előkészítve. Paraméterek: {params}")
+            if place_order_on_demo(config, params)[0]:
                 state_manager.remove_mapping(symbol, position_side)
-                
-                logger.info("Várakozás a PnL adatok API szinkronizációjára (2 másodperc)...")
-                time.sleep(2)
-                
                 closed_pnl, daily_pnl = reporting_manager.get_pnl_update_after_close(config['demo_api'], symbol)
                 cycle_events.append({'type': 'close', 'data': {'symbol': symbol, 'side': position_side, 'qty': qty_str, 'pnl': closed_pnl, 'daily_pnl': daily_pnl}})
 
         time.sleep(0.5)
 
 def update_config_value(section, option, value):
-    """Frissíti a config.ini fájl egy adott értékét."""
     try:
         config = configparser.ConfigParser()
         config.read('config.ini')
@@ -93,7 +108,6 @@ def update_config_value(section, option, value):
         print(f"Hiba a config.ini frissítésekor: {e}")
 
 def perform_interactive_setup(config_data):
-    """Minden indításkor lefutó interaktív folyamatot kezel."""
     print("="*60 + "\nINTERAKTÍV INDÍTÁSI MENÜ\n" + "="*60)
     while True:
         choice = input("Szeretnél tiszta lappal indulni? [i/n]: ").lower()
@@ -154,26 +168,15 @@ def main():
         logger.info(f"TRADE MÁSOLÓ INDUL - Verzió: {__version__}")
         
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        sync_state_path = DATA_DIR / "sync_state.json"
-        if sync_state_path.exists():
-            try:
-                sync_state_path.unlink()
-                logger.info("Régi 'sync_state.json' fájl törölve az induláskor.")
-            except OSError as e:
-                logger.warning(f"Nem sikerült törölni a 'sync_state.json' fájlt: {e}")
-        
-        # JAVÍTÁS: Létrehozzuk a jelzőeseményt
-        sync_trigger_event = Event()
         
         send_telegram_message(config_data, f"🚀 *Trade Másoló Indul*\nVerzió: `{__version__}`")
         
         bot_process = None
         if config_data.get('telegram', {}).get('bot_token'):
             from modules.telegram_bot import run_bot_process
-            # JAVÍTÁS: Átadjuk a jelzőeseményt a bot processznek
             bot_process = multiprocessing.Process(
                 target=run_bot_process, 
-                args=(config_data['telegram']['bot_token'], config_data, DATA_DIR, sync_trigger_event), 
+                args=(config_data['telegram']['bot_token'], config_data, DATA_DIR), 
                 daemon=True
             )
             bot_process.start()
@@ -204,9 +207,6 @@ def main():
                 logger.warning("A Telegram bot processz váratlanul leállt.")
                 bot_process = None
 
-            if execute_pending_sync_actions(config_data, state_manager, reporting_manager, DATA_DIR):
-                activity_since_last_pnl_update = True
-
             logger.info("-" * 60)
             
             activity_detected, new_last_id = main_event_loop(config_data, state_manager, order_aggregator)
@@ -214,7 +214,7 @@ def main():
                 activity_since_last_pnl_update = True
             if new_last_id:
                 last_id_to_commit = new_last_id
-
+            
             ready_orders = order_aggregator.get_ready_orders()
             if ready_orders:
                 process_aggregated_orders(ready_orders, config_data, state_manager, reporting_manager, cycle_events)
@@ -232,8 +232,9 @@ def main():
                         if sl_event:
                             cycle_events.append({'type': 'sl', 'data': sl_event})
                         time.sleep(0.3)
-
-            check_positions_sync(config_data, DATA_DIR, sync_trigger_event)
+            
+            # JAVÍTÁS: A szinkron ellenőrzése a ciklus végére került, a helyes logikai sorrend szerint.
+            check_positions_sync(config_data, DATA_DIR, state_manager, reporting_manager)
 
             if cycle_events:
                 summary_message = format_cycle_summary(cycle_events, __version__)
@@ -246,10 +247,8 @@ def main():
                 last_id_to_commit = None
 
             interval = config_data['settings']['loop_interval']
-            # JAVÍTÁS: Várakozás az eseményre vagy az időtúllépésre
-            logger.info(f"--- Ciklus vége, várakozás {interval} másodpercet, vagy amíg a szinkron-jel nem érkezik... ---")
-            sync_trigger_event.wait(timeout=interval)
-            sync_trigger_event.clear() # Fontos, hogy a következő ciklushoz töröljük a jelzést
+            logger.info(f"--- Ciklus vége, várakozás {interval} másodpercet... ---")
+            time.sleep(interval)
             
     except KeyboardInterrupt:
         logger.info("Program leállítva (Ctrl+C).")

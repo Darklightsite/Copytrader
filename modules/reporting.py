@@ -1,4 +1,4 @@
-# FÁJL: modules/reporting.py (Teljes, javított kód)
+# FÁJL: modules/reporting.py
 
 import logging
 import json
@@ -16,7 +16,7 @@ class ReportingManager:
         self.status_file = self.data_dir / "status.json"
         self.pnl_report_file = self.data_dir / "pnl_report.json"
         self.daily_stats_file = self.data_dir / "daily_stats.json"
-        self.activity_file = self.data_dir / "activity.json" # Hozzáadva a hiányzó definíció
+        self.activity_file = self.data_dir / "activity.json"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.pnl_cache = {}
         self.live_chart_file = self.data_dir / "live_chart_data.json"
@@ -33,6 +33,7 @@ class ReportingManager:
         try:
             with open(file_path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4, ensure_ascii=False)
         except IOError as e: logger.error(f"Hiba a(z) {file_path} írása közben: {e}")
+
     def _update_chart_data(self, account_data):
         """Hozzáadja az aktuális egyenleg adatpontot a megfelelő chart fájlhoz."""
         account_name = account_data.get('name')
@@ -49,12 +50,10 @@ class ReportingManager:
                 "value": round(account_data.get('balance', 0), 4)
             }
 
-            # Optimalizálás: Ne adjunk hozzá új pontot, ha az utolsó túl közeli
-            # és az érték nem változott.
             if chart_data:
                 last_point = chart_data[-1]
                 if new_point['time'] - last_point.get('time', 0) < 60 and new_point['value'] == last_point.get('value'):
-                    return # Nincs szükség frissítésre
+                    return 
 
             chart_data.append(new_point)
             self._save_json(file_path, chart_data)
@@ -63,7 +62,6 @@ class ReportingManager:
         except Exception as e:
             logger.error(f"Hiba a chart adatok frissítése közben ({file_path.name}): {e}", exc_info=True)
 
-    # --- JAVÍTÁS: A hiányzó függvény visszahelyezve ---
     def update_activity_log(self, activity_type="copy"):
         """Frissíti az aktivitási naplót (utolsó másolás, indulás ideje)."""
         activity_data = self._load_json(self.activity_file, {"last_copy_activity": "Még nem történt", "startup_time": ""})
@@ -76,7 +74,7 @@ class ReportingManager:
         logger.info(f"Aktivitás napló frissítve: {activity_type}")
 
     def _update_daily_stats(self, account_data):
-        if account_data['name'].lower() != 'demó':
+        if account_data.get('name', '').lower() != 'demó':
             return
         account_name_key = 'demo'
         today_iso = datetime.now(timezone.utc).strftime('%Y-%m-%d')
@@ -94,20 +92,19 @@ class ReportingManager:
         self._save_json(self.daily_stats_file, stats)
 
     def update_reports(self, pnl_update_needed=False):
-            """Frissíti az összes riportot: státusz, PnL, napi statisztikák és chart adatok."""
-            logger.info("Riportok frissítése...")
-            live_account_data = self._get_account_data(self.live_api, "Élő", pnl_update_needed)
-            demo_account_data = self._get_account_data(self.demo_api, "Demó", pnl_update_needed)
-            
-            # Chart adatok frissítése (minden ciklusban)
-            self._update_chart_data(live_account_data)
-            self._update_chart_data(demo_account_data)
-            
-            # Egyéb riportok frissítése
-            self._update_daily_stats(demo_account_data)
-            self._update_status_report(live_account_data, demo_account_data)
-            if pnl_update_needed:
-                self._update_pnl_report(live_account_data, demo_account_data)
+        """Frissíti az összes riportot: státusz, PnL, napi statisztikák és chart adatok."""
+        logger.info("Riportok frissítése...")
+        live_account_data = self._get_account_data(self.live_api, "Élő", pnl_update_needed)
+        demo_account_data = self._get_account_data(self.demo_api, "Demó", pnl_update_needed)
+        
+        self._update_chart_data(live_account_data)
+        self._update_chart_data(demo_account_data)
+        
+        self._update_daily_stats(demo_account_data)
+        self._update_status_report(live_account_data, demo_account_data)
+        if pnl_update_needed:
+            self._update_pnl_report(live_account_data, demo_account_data)
+
     def _fetch_history_in_chunks(self, api, endpoint, **extra_params):
         """Stabil, 7 napos blokkokban történő lekérdezési logika."""
         all_records = []
@@ -125,16 +122,12 @@ class ReportingManager:
         while current_start_ms < end_time_ms:
             chunk_end_ms = min(current_start_ms + int(timedelta(days=7).total_seconds() * 1000) - 1, end_time_ms)
             cursor = ""
-            for _ in range(200):
+            for _ in range(200): # Max 200 oldal (20,000 rekord) egy 7 napos blokkban
                 params = {"limit": 100, "cursor": cursor, "startTime": current_start_ms, "endTime": chunk_end_ms, **extra_params}
                 response = make_api_request(api, endpoint, "GET", params)
                 if response and response.get("retCode") == 0:
-                    
-                    # --- JAVÍTÁS ITT ---
                     data = response.get("result", {})
                     records = data.get("list", [])
-                    # ---------------------
-
                     if records:
                         all_records.extend(records)
                     
@@ -142,7 +135,7 @@ class ReportingManager:
                     if not cursor:
                         break
                 else:
-                    break # Hiba vagy nincs több adat a blokkban
+                    break 
                 time.sleep(0.5)
             
             current_start_ms = chunk_end_ms + 1
@@ -206,12 +199,37 @@ class ReportingManager:
         return {"start_date": start_date, "periods": periods}
         
     def get_pnl_update_after_close(self, api, symbol):
+        """
+        Lekérdezi a legutóbbi zárt PnL-t és a teljes napi PnL-t.
+        Újrapróbálkozási logikát tartalmaz a megbízhatóság növelése érdekében.
+        """
+        closed_pnl = None
+        
+        # JAVÍTÁS: Újrapróbálkozási logika a PnL lekérdezéséhez
+        for i in range(4): # Max 4 próbálkozás
+            try:
+                start_ms_trade = int((datetime.now(timezone.utc) - timedelta(minutes=15)).timestamp() * 1000)
+                pnl_history_trade = get_data(api, "/v5/position/closed-pnl", {'category': 'linear', 'symbol': symbol, 'startTime': start_ms_trade, 'limit': 1})
+                if pnl_history_trade and pnl_history_trade.get('list'):
+                    closed_pnl = float(pnl_history_trade['list'][0].get('closedPnl', 0))
+                    logger.info(f"A legutóbbi trade PnL-je sikeresen lekérdezve: {closed_pnl}")
+                    break 
+                else:
+                    logger.warning(f"Zárt PnL adat még nem elérhető a(z) {symbol} szimbólumra. ({i+1}. próba)")
+                    time.sleep(i * 2 + 1) # Növekvő várakozási idő (1, 3, 5 mp)
+            except Exception as e:
+                logger.error(f"Hiba a PnL lekérdezése közben: {e}", exc_info=True)
+                time.sleep(2)
+        
+        if closed_pnl is None:
+            logger.error(f"A PnL adatot több próbálkozás után sem sikerült lekérdezni a(z) {symbol} szimbólumra.")
+            
         try:
-            start_ms_trade = int((datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp() * 1000)
-            pnl_history_trade = get_data(api, "/v5/position/closed-pnl", {'category': 'linear', 'symbol': symbol, 'startTime': start_ms_trade, 'limit': 1})
-            closed_pnl = float(pnl_history_trade['list'][0].get('closedPnl', 0)) if pnl_history_trade and pnl_history_trade.get('list') else None
             start_ms_daily = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
             pnl_history_daily_data = get_data(api, "/v5/position/closed-pnl", {'category': 'linear', 'startTime': start_ms_daily})
-            daily_pnl = sum(float(p.get('closedPnl', 0)) for p in pnl_history_daily_data.get('list', [])) if pnl_history_daily_data else 0
-            return closed_pnl, daily_pnl
-        except Exception: return None, None
+            daily_pnl = sum(float(p.get('closedPnl', 0)) for p in pnl_history_daily_data.get('list', [])) if pnl_history_daily_data else 0.0
+        except Exception:
+            logger.error("Hiba a napi PnL lekérdezése közben.", exc_info=True)
+            daily_pnl = 0.0
+            
+        return closed_pnl, daily_pnl
