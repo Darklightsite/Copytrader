@@ -1,8 +1,8 @@
-# FÁJL: modules/config_loader.py (Teljes, javított kód)
+# FÁJL: modules/config_loader.py (Teljes, javított és véglegesített kód)
 
 import configparser
 import logging
-import os # Szükséges az elérési utak kezeléséhez
+import os
 
 logger = logging.getLogger()
 
@@ -10,7 +10,6 @@ def load_configuration(path='config.ini'):
     """Beolvassa és validálja a konfigurációt a megadott .ini fájlból, részletes naplózással."""
     parser = configparser.ConfigParser()
     
-    # JAVÍTÁS: Abszolút elérési út meghatározása és naplózása a félreértések elkerülése érdekében
     config_path = os.path.abspath(path)
     logger.info(f"Konfigurációs fájl beolvasásának megkezdése: {config_path}")
 
@@ -27,13 +26,12 @@ def load_configuration(path='config.ini'):
         logger.critical(f"Hiba a konfigurációs fájl olvasása közben: {e}", exc_info=True)
         return None
 
-    # JAVÍTÁS: Szigorú ellenőrzés, hogy a szükséges szekció és opció létezik-e
     if not parser.has_section('settings'):
         logger.critical(f"A beolvasott konfigurációs fájlból HIÁNYZIK a [settings] szekció!")
         return None
     
     if not parser.has_option('settings', 'copy_multiplier'):
-         logger.warning(f"A [settings] szekcióból hiányzik a 'copy_multiplier' opció. Az alapértelmezett 1.0 lesz használva.")
+         logger.warning(f"A [settings] szekcióból hiányzik a 'copy_multiplier' opció. Az alapértelmezett 10.0 lesz használva.")
 
     config = {}
     try:
@@ -63,17 +61,26 @@ def load_configuration(path='config.ini'):
         }
 
         # Settings Szekció
-        sl_tiers_str = parser.get('settings', 'SL_LOSS_TIERS_USD', fallback='10, 20, 30')
+        # --- JAVÍTÁS: A kulcsok mostantól kisbetűsek, hogy megfeleljenek a beküldött config fájlnak ---
+        # --- és a 'symbolstocopy' helyes kezelése ---
+        sl_tiers_str = parser.get('settings', 'sl_loss_tiers_usd', fallback='10, 20, 30')
+        
+        symbols_raw = parser.get('settings', 'symbolstocopy', fallback='')
+        if symbols_raw.strip() == '[]':
+            symbols_list = []
+        else:
+            symbols_list = [s.strip() for s in symbols_raw.split(',') if s.strip()]
+            
         config['settings'] = {
-            'live_start_date': parser.get('settings', 'LiveStartDate', fallback=None),
-            'demo_start_date': parser.get('settings', 'DemoStartDate', fallback=None),
-            'log_rotation_backup_count': parser.getint('settings', 'LogRotationBackupCount', fallback=14),
-            'loop_interval': parser.getint('settings', 'LoopIntervalSeconds', fallback=120),
-            'symbols_to_copy': [s.strip() for s in parser.get('settings', 'SymbolsToCopy', fallback='').split(',') if s.strip()],
-            'log_level': parser.get('settings', 'LogLevel', fallback='INFO'),
-            'clear_log_on_startup': parser.getboolean('settings', 'ClearLogOnStartup', fallback=True),
+            'live_start_date': parser.get('settings', 'livestartdate', fallback=None),
+            'demo_start_date': parser.get('settings', 'demostartdate', fallback=None),
+            'log_rotation_backup_count': parser.getint('settings', 'logrotationbackupcount', fallback=14),
+            'loop_interval': parser.getint('settings', 'loopintervalseconds', fallback=120),
+            'symbols_to_copy': symbols_list,
+            'log_level': parser.get('settings', 'loglevel', fallback='INFO'),
+            'clear_log_on_startup': parser.getboolean('settings', 'clearlogonstartup', fallback=True),
             'copy_multiplier': parser.getfloat('settings', 'copy_multiplier', fallback=10.0),
-            'qty_precision': parser.getint('settings', 'QTY_PRECISION', fallback=4),
+            'qty_precision': parser.getint('settings', 'qty_precision', fallback=4),
             'sl_loss_tiers_usd': sorted([float(x.strip()) for x in sl_tiers_str.split(',')], reverse=True)
         }
         
