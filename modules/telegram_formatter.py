@@ -34,7 +34,7 @@ def format_cycle_summary(events: list, version: str) -> str:
             
         elif event_type == 'close':
             symbol, side, qty = data.get('symbol'), data.get('side', ''), format_qty(data.get('qty', '0'))
-            pnl, daily_pnl = data.get('pnl'), data.get('daily_pnl')
+            pnl, daily_pnl = data.get('pnl'), data.get('daily_pnl')+data.get('pnl')
 
             pnl_str = f"Trade PnL: `${pnl:,.2f}`" if pnl is not None else ""
             daily_pnl_str = f" | Mai PnL: `${daily_pnl:,.2f}`" if daily_pnl is not None else ""

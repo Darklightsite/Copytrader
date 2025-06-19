@@ -101,8 +101,9 @@ class TelegramBotManager:
             demo_daily_pnl = pnl_report.get("Demó", {}).get("periods", {}).get("Mai", {}).get("pnl", 0.0)
 
             reply = (
-                f"✅ *Másoló v{status.get('version', 'N/A')}* | `{status.get('timestamp', 'N/A')}`\n"
-                f"Utolsó másolás: `{activity.get('last_copy_activity', 'N/A')}`\n\n"
+                f"✅ *Másoló v{status.get('version', 'N/A')}*\n"
+                f"Szinkronizáció: `{status.get('timestamp', 'N/A')}`\n"
+                f"Másolás: `{activity.get('last_copy_activity', 'N/A')}`\n\n"
                 f"🏦 *Egyenleg (Élő):* `${status.get('live_balance', 0.0):,.2f}`\n"
                 f"📈 *Nyitott PnL (Élő):* `${status.get('live_pnl', 0.0):,.2f}`\n"
                 f"💰 *Mai Zárt PnL (Élő):* `${live_daily_pnl:,.2f}`\n\n"
