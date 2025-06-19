@@ -1,4 +1,4 @@
-# FÁJL: modules/sync_checker.py
+# FÁJL: modules/sync_checker.py (Teljes, ellenőrzött kód)
 
 import logging
 import time

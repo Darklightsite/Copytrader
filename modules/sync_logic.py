@@ -42,13 +42,13 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
             activity_detected = True
             pos_idx = _determine_position_idx(config_data, demo_pos['side'])
             close_params = {'category': 'linear', 'symbol': demo_pos['symbol'], 'side': 'Sell' if demo_pos['side'] == 'Buy' else 'Buy', 'qty': demo_pos['size'], 'reduceOnly': True, 'positionIdx': pos_idx, 'orderType': 'Market'}
-            if place_order_on_demo(config_data, close_params)[0]:
+            # --- JAVÍTÁS: A [0] indexelés eltávolítva ---
+            if place_order_on_demo(config_data, close_params):
                 cycle_events.append({'type': 'close', 'data': {'symbol': demo_pos['symbol'], 'side': demo_pos['side'], 'qty': demo_pos['size'], 'pnl': None, 'daily_pnl': None}})
             time.sleep(0.5)
 
     # Hiányzó vagy méreteltéréses pozíciók korrekciója
     for pos_id, live_pos in live_positions.items():
-        # JAVÍTÁS: A szorzó és a kerekítés alkalmazása
         expected_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)), rounding=ROUND_DOWN)
         pos_idx = _determine_position_idx(config_data, live_pos['side'])
         
@@ -65,11 +65,13 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
                 close_params = {'category': 'linear', 'symbol': live_pos['symbol'], 'side': 'Sell' if live_pos['side'] == 'Buy' else 'Buy', 'qty': str(actual_qty), 'reduceOnly': True, 'positionIdx': pos_idx, 'orderType': 'Market'}
                 place_order_on_demo(config_data, close_params)
                 time.sleep(1)
-                if place_order_on_demo(config_data, open_params)[0]:
+                # --- JAVÍTÁS: A [0] indexelés eltávolítva ---
+                if place_order_on_demo(config_data, open_params):
                     cycle_events.append({'type': 'open', 'data': {'symbol': live_pos['symbol'], 'side': live_pos['side'], 'qty': str(expected_qty), 'is_increase': True}})
         else:
             activity_detected = True
-            if place_order_on_demo(config_data, open_params)[0]:
+            # --- JAVÍTÁS: A [0] indexelés eltávolítva ---
+            if place_order_on_demo(config_data, open_params):
                 cycle_events.append({'type': 'open', 'data': {'symbol': live_pos['symbol'], 'side': live_pos['side'], 'qty': str(expected_qty), 'is_increase': False}})
 
         state_manager.map_position(live_pos['symbol'], live_pos['side'])
@@ -97,10 +99,10 @@ def main_event_loop(config_data, state_manager, order_aggregator):
         logger.warning("Nincs utolsó esemény ID, a ciklus kihagyva. Kezdeti szinkronra lehet szükség.")
         return False, None
 
-    # JAVÍTÁS: Szorzó és pontosság beolvasása a ciklus elején
     multiplier = Decimal(str(config_data['settings'].get('copy_multiplier', 1.0)))
     qty_precision = config_data['settings'].get('qty_precision', 4)
-    logger.info(f"Aktuális szorzó: {multiplier}, Mennyiség pontosság: {qty_precision}")
+    
+    logger.info(f"A ciklushoz használt másolási szorzó: {multiplier}")
 
     recent_fills_data = get_data(config_data['live_api'], "/v5/execution/list", {"category": "linear", "limit": 100})
     if not recent_fills_data or not recent_fills_data.get('list'):
@@ -136,7 +138,6 @@ def main_event_loop(config_data, state_manager, order_aggregator):
         if float(closed_size_str) > 0:
             position_side = "Sell" if side == "Buy" else "Buy"
             if state_manager.is_position_mapped(symbol, position_side):
-                # JAVÍTÁS: Szorzó és kerekítés alkalmazása a zárási mennyiségre
                 live_qty = Decimal(closed_size_str)
                 demo_qty = (live_qty * multiplier).quantize(Decimal('1e-' + str(qty_precision)), rounding=ROUND_DOWN)
                 if demo_qty == 0:
@@ -153,7 +154,6 @@ def main_event_loop(config_data, state_manager, order_aggregator):
                 order_aggregator.add_fill(fill_data)
         else:
             is_increase = state_manager.is_position_mapped(symbol, side)
-            # JAVÍTÁS: Szorzó és kerekítés alkalmazása a nyitási/növelési mennyiségre
             live_qty = Decimal(exec_qty_str)
             demo_qty = (live_qty * multiplier).quantize(Decimal('1e-' + str(qty_precision)), rounding=ROUND_DOWN)
             if demo_qty == 0:

@@ -1,3 +1,3 @@
 git add .
-git commit -m "Refactor: Frissítés"
+git commit -m "Refactor: STABIL"
 git push

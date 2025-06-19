@@ -21,7 +21,7 @@ from modules.telegram_sender import send_telegram_message
 from modules.sync_checker import check_positions_sync
 from modules.telegram_formatter import format_cycle_summary
 
-__version__ = "14.7.2 (Logikai Sorrend Javítva)"
+__version__ = "14.8.1 (TypeError Javítva)"
 
 logger = logging.getLogger()
 
@@ -76,7 +76,8 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
             params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': False, 'orderType': 'Market', 'positionIdx': pos_idx}
             
             logger.info(f"OPEN parancs előkészítve. Paraméterek: {params}")
-            if place_order_on_demo(config, params)[0]:
+            # --- JAVÍTÁS: A [0] indexelés eltávolítva ---
+            if place_order_on_demo(config, params):
                 state_manager.map_position(symbol, side)
                 reporting_manager.update_activity_log("copy")
                 cycle_events.append({'type': 'open', 'data': {'symbol': symbol, 'side': side, 'qty': qty_str, 'is_increase': is_increase}})
@@ -87,7 +88,8 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
             params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': True, 'orderType': 'Market', 'positionIdx': pos_idx}
             
             logger.info(f"CLOSE parancs előkészítve. Paraméterek: {params}")
-            if place_order_on_demo(config, params)[0]:
+            # --- JAVÍTÁS: A [0] indexelés eltávolítva ---
+            if place_order_on_demo(config, params):
                 state_manager.remove_mapping(symbol, position_side)
                 closed_pnl, daily_pnl = reporting_manager.get_pnl_update_after_close(config['demo_api'], symbol)
                 cycle_events.append({'type': 'close', 'data': {'symbol': symbol, 'side': position_side, 'qty': qty_str, 'pnl': closed_pnl, 'daily_pnl': daily_pnl}})
@@ -200,6 +202,10 @@ def main():
                     send_telegram_message(config_data, summary_message)
 
         last_id_to_commit = None
+        
+        sync_cycle_counter = 0
+        SYNC_CHECK_INTERVAL = 5 
+
         while True:
             cycle_events = []
             
@@ -210,8 +216,13 @@ def main():
             logger.info("-" * 60)
             
             activity_detected, new_last_id = main_event_loop(config_data, state_manager, order_aggregator)
+            
             if activity_detected:
                 activity_since_last_pnl_update = True
+                aggregation_window = config_data['settings'].get('aggregation_window_seconds', 3)
+                logger.info(f"Új események észlelve, várakozás {aggregation_window + 1} mp-et az aggregációra...")
+                time.sleep(aggregation_window + 1)
+            
             if new_last_id:
                 last_id_to_commit = new_last_id
             
@@ -233,8 +244,13 @@ def main():
                             cycle_events.append({'type': 'sl', 'data': sl_event})
                         time.sleep(0.3)
             
-            # JAVÍTÁS: A szinkron ellenőrzése a ciklus végére került, a helyes logikai sorrend szerint.
-            check_positions_sync(config_data, DATA_DIR, state_manager, reporting_manager)
+            sync_cycle_counter += 1
+            if sync_cycle_counter >= SYNC_CHECK_INTERVAL:
+                logger.info(f"{SYNC_CHECK_INTERVAL} ciklus eltelt, mély szinkron ellenőrzés futtatása...")
+                check_positions_sync(config_data, DATA_DIR, state_manager, reporting_manager)
+                sync_cycle_counter = 0
+            else:
+                logger.info(f"Mély szinkron ellenőrzés kihagyva. Következő {SYNC_CHECK_INTERVAL - sync_cycle_counter} ciklus múlva fut.")
 
             if cycle_events:
                 summary_message = format_cycle_summary(cycle_events, __version__)
