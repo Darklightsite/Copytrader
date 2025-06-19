@@ -16,3 +16,5 @@ Thumbs.db
 
 # A fájl végére add hozzá ezt a sort:
 data/*.json
+
+config.ini
