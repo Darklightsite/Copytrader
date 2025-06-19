@@ -1,4 +1,4 @@
-# FÁJL: modules/sync_logic.py
+# FÁJL: modules/sync_logic.py (Teljes, javított kód)
 
 import time
 import logging
@@ -10,18 +10,10 @@ from .order_handler import place_order_on_demo, set_leverage_on_demo, _determine
 logger = logging.getLogger()
 
 def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_events):
-    # ... (a függvény többi része változatlan) ...
-    pass
-
-def main_event_loop(config_data, state_manager, reporting_manager, cycle_events):
-    # ... (a függvény többi része változatlan) ...
-    pass
-
-# A teljes, helyes kódot az előző válaszomban megtalálod, a lényeg a fenti
-# "from .order_handler import..." sor, ami most már a _determine_position_idx-et is tartalmazza.
-# A biztonság kedvéért itt van újra a teljes, helyes tartalom:
-
-def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_events):
+    """
+    A program indulásakor végzi el a kezdeti szinkronizációt.
+    Beállítja a tőkeáttételt, szinkronizálja a pozíciókat és gyűjti az eseményeket.
+    """
     logger.info("=" * 60)
     logger.info("KEZDETI SZINKRONIZÁCIÓ INDUL...")
     
@@ -35,6 +27,7 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
     demo_positions_resp = get_data(config_data['demo_api'], "/v5/position/list", params)
 
     if live_positions_resp is None or demo_positions_resp is None:
+        logger.error("Kezdeti szinkron sikertelen: pozíciók lekérése sikertelen.")
         return False
 
     live_positions = {f"{p['symbol']}-{p['side']}": p for p in live_positions_resp.get('list', []) if float(p.get('size', '0')) > 0}
@@ -42,14 +35,17 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
     
     logger.info(f"Élő pozíciók: {len(live_positions)} db, Demó pozíciók: {len(demo_positions)} db.")
 
+    # Extra pozíciók zárása a demón
     for pos_id, demo_pos in demo_positions.items():
         if pos_id not in live_positions:
             activity_detected = True
             pos_idx = _determine_position_idx(config_data, demo_pos['side'])
             close_params = {'category': 'linear', 'symbol': demo_pos['symbol'], 'side': 'Sell' if demo_pos['side'] == 'Buy' else 'Buy', 'qty': demo_pos['size'], 'reduceOnly': True, 'positionIdx': pos_idx, 'orderType': 'Market'}
-            place_order_on_demo(config_data, close_params)
+            if place_order_on_demo(config_data, close_params):
+                cycle_events.append({'type': 'close', 'data': {'symbol': demo_pos['symbol'], 'side': demo_pos['side'], 'qty': demo_pos['size'], 'pnl': None, 'daily_pnl': None}})
             time.sleep(0.5)
 
+    # Hiányzó vagy méreteltéréses pozíciók korrekciója
     for pos_id, live_pos in live_positions.items():
         expected_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
         pos_idx = _determine_position_idx(config_data, live_pos['side'])
@@ -89,6 +85,8 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
     return activity_detected
 
 def main_event_loop(config_data, state_manager, reporting_manager, cycle_events):
+    """A fő eseményfigyelő ciklus, ami az új kötéseket keresi és eseményeket gyűjt."""
+    logger.info("Új kereskedési események keresése...")
     activity_detected = False
     last_known_id = state_manager.get_last_id()
     if not last_known_id:
@@ -113,7 +111,13 @@ def main_event_loop(config_data, state_manager, reporting_manager, cycle_events)
     qty_precision = config_data['settings']['qty_precision']
 
     for fill in reversed(new_fills_to_process):
-        symbol, side, exec_qty_str, closed_size_str = fill['symbol'], fill['side'], fill['execQty'], fill['closedSize']
+        symbol, side, exec_qty_str = fill['symbol'], fill['side'], fill['execQty']
+        closed_size_str = fill.get('closedSize', '0')
+        exec_type = fill.get('execType')
+
+        if exec_type != 'Trade':
+            logger.info(f"Esemény kihagyva: {symbol} ({exec_type}), nem Trade típusú.")
+            continue
         
         if config_data['settings'].get('symbols_to_copy') and symbol not in config_data['settings']['symbols_to_copy']:
             continue

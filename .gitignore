@@ -13,3 +13,6 @@ Thumbs.db
 # IDE / Editor specific
 .idea/
 .vscode/
+
+# A fájl végére add hozzá ezt a sort:
+data/*.json

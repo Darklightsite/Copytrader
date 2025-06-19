@@ -18,15 +18,15 @@ def setup_logging(cfg, log_dir: Path):
 
     process_name = multiprocessing.current_process().name
     if process_name == 'MainProcess':
-        log_file_name = "trade_copier_main.log"
+        log_file_name = "trade_copier_main.txt"
     else:
-        log_file_name = f"trade_copier_bot_{os.getpid()}.log"
+        log_file_name = f"trade_copier_bot_telegramm.txt"
 
     log_file_path = log_dir / log_file_name
 
-    if process_name == 'MainProcess' and clear_on_startup and (log_dir / "trade_copier_main.log").exists():
+    if process_name == 'MainProcess' and clear_on_startup and (log_dir / "trade_copier_main.txt").exists():
         try:
-            (log_dir / "trade_copier_main.log").unlink()
+            (log_dir / "trade_copier_main.txt").unlink()
             print("Info: Előző fő naplófájl törölve a beállítások alapján.")
         except Exception as e:
             print(f"Warning: Nem sikerült törölni az előző fő naplófájlt: {e}")
