@@ -15,10 +15,10 @@ def setup_logging(cfg, log_dir: Path):
     # Naplózási szint és fájlnév meghatározása a processz neve alapján
     if process_name == 'MainProcess':
         log_level_str = cfg['settings'].get('loglevel_main', 'INFO')
-        log_file_name = "main_process.log"
+        log_file_name = "main_process.txt"
     else: # Feltételezzük, hogy minden más processz a Telegram bothoz tartozik
         log_level_str = cfg['settings'].get('loglevel_bot', 'WARNING')
-        log_file_name = "telegram_bot_process.log"
+        log_file_name = "telegram_bot_process.txt"
 
     clear_on_startup = cfg['settings'].get('clear_log_on_startup', False)
     backup_count = cfg['settings'].get('log_rotation_backup_count', 14)
@@ -66,9 +66,15 @@ def setup_logging(cfg, log_dir: Path):
         console_handler.setLevel(logging.INFO)
         logger.addHandler(console_handler)
 
+    # --- MÓDOSÍTÁS KEZDETE ---
     # Külső könyvtárak naplózásának halkítása a "szemét" elkerülése érdekében
     # Ezek a beállítások minden processzre érvényesek lesznek
-    third_party_loggers = ["requests", "urllib3", "httpx", "telegram", "apscheduler", "httpcore"]
+    third_party_loggers = [
+        "requests", "urllib3", "httpx", 
+        "telegram", "apscheduler", "httpcore",
+        "matplotlib"  # Ezt a sort adtam hozzá
+    ]
+    # --- MÓDOSÍTÁS VÉGE ---
     for lib_name in third_party_loggers:
         logging.getLogger(lib_name).setLevel(logging.WARNING)
 
