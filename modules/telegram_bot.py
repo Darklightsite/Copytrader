@@ -4,13 +4,11 @@ import logging
 import json
 import io
 import asyncio
-import warnings # <-- MÓDOSÍTÁS: A 'warnings' modul importálása
+import warnings
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-# --- KORÁBBI MÓDOSÍTÁS ---
-# A Telegram és Matplotlib könyvtárak importját áthelyeztük a run_bot_process függvénybe,
-# hogy a naplózás beállítása garantáltan előttük fusson le.
+# A Telegram és Matplotlib könyvtárak importját áthelyeztük a run_bot_process függvénybe
 TELEGRAM_LIBS_AVAILABLE = False
 MATPLOTLIB_AVAILABLE = False
 class Update: pass
@@ -18,7 +16,6 @@ class ContextTypes:
     class DEFAULT_TYPE: pass
 class ConversationHandler:
     END = -1
-# --- KORÁBBI MÓDOSÍTÁS VÉGE ---
 
 logger = logging.getLogger()
 
@@ -46,7 +43,6 @@ class TelegramBotManager:
         self._register_handlers()
 
     def _register_handlers(self):
-        # A ConversationHandler definíciója, ami a figyelmeztetést okozza
         conv_handler = self.ConversationHandler(
             entry_points=[self.CommandHandler('chart', self.chart_start)],
             states={
@@ -54,13 +50,15 @@ class TelegramBotManager:
                 self.SELECT_ACCOUNT: [self.CallbackQueryHandler(self.select_account_and_generate, pattern='^account_'), self.CallbackQueryHandler(self.back_to_period, pattern='^back_to_period$')]
             },
             fallbacks=[self.CallbackQueryHandler(self.cancel, pattern='^cancel$'), self.CommandHandler('chart', self.chart_start)],
-            per_message=False, # Ez a beállítás okozza a figyelmeztetést
+            per_message=False,
             conversation_timeout=300
         )
         self.app.add_handler(conv_handler)
         self.app.add_handler(self.CommandHandler(["start", "help"], self.start_command))
         self.app.add_handler(self.CommandHandler("status", self.status_command))
         self.app.add_handler(self.CommandHandler("pnl", self.pnl_command))
+        # --- ÚJ PARANCS HOZZÁADÁSA ---
+        self.app.add_handler(self.CommandHandler("pnlchart", self.pnl_chart_command))
 
     def run(self):
         logger.info("Telegram bot processz indul...")
@@ -88,9 +86,11 @@ class TelegramBotManager:
             logger.error(f"Hiba a parancsüzenet törlésekor: {e}", exc_info=True)
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # --- SÚGÓ SZÖVEG FRISSÍTÉSE ---
         help_text = ("👋 *Szia! Elérhető parancsok:*\n\n"
                      "`/status` - Részletes állapotjelentés\n"
-                     "`/pnl` - Összesített PnL riport\n"
+                     "`/pnl` - Összesített PnL riport (szöveges)\n"
+                     "`/pnlchart` - Összesített PnL riport (grafikon)\n"
                      "`/chart` - Interaktív egyenleggörbe")
         await update.message.reply_markdown(help_text)
         await self._delete_command_message(update)
@@ -168,7 +168,104 @@ class TelegramBotManager:
                         message += f"  - `{period}`: {pnl_emoji} `${pnl_value:,.2f}` ({trade_count} trade)\n"
                 message += "\n"
         await context.bot.send_message(chat_id=update.effective_chat.id, text=message, parse_mode='Markdown', disable_notification=True)
-    
+
+    # --- ÚJ FUNKCIÓ: PNL OSZLOPDIAGRAM ---
+    async def pnl_chart_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logger.info("/pnlchart parancs fogadva.")
+        await self._delete_command_message(update)
+
+        if not MATPLOTLIB_AVAILABLE:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Grafikon funkció nem elérhető: 'matplotlib' csomag hiányzik.")
+            return
+
+        pnl_data = self._load_json_file(self.data_dir / "pnl_report.json")
+        if not pnl_data:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Nincsenek elérhető PnL adatok a grafikonhoz.")
+            return
+
+        # Üzenet küldése a várakozásról
+        wait_message = await context.bot.send_message(chat_id=update.effective_chat.id, text="⏳ Készítem a PnL grafikont...")
+
+        try:
+            loop = asyncio.get_running_loop()
+            # A grafikon generálása külön szálon fut, hogy ne blokkolja a botot
+            image_buffer, caption_text = await loop.run_in_executor(None, self._generate_pnl_barchart, pnl_data)
+            
+            # A várakozási üzenet törlése
+            await wait_message.delete()
+            
+            if image_buffer:
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=image_buffer, caption=caption_text, parse_mode='Markdown')
+            else:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=caption_text)
+
+        except Exception as e:
+            logger.error(f"Hiba a PnL grafikon generálásakor: {e}", exc_info=True)
+            # A várakozási üzenet szerkesztése hiba esetén
+            await wait_message.edit_text(text="❌ Hiba történt a PnL grafikon készítésekor.")
+
+    def _generate_pnl_barchart(self, pnl_data):
+        """A háttérben legenerálja a PnL oszlopdiagramot a matplotlib segítségével."""
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        try:
+            plt.style.use('dark_background')
+            fig, ax = plt.subplots(figsize=(10, 7))
+
+            accounts = list(pnl_data.keys())
+            periods = ["Mai", "Heti", "Havi", "Teljes"]
+            
+            pnl_values = {acc: [pnl_data.get(acc, {}).get('periods', {}).get(p, {}).get('pnl', 0.0) for p in periods] for acc in accounts}
+
+            x = np.arange(len(periods))
+            width = 0.35 if len(accounts) > 1 else 0.5
+            
+            colors = {'Élő': '#00aaff', 'Demó': '#ffaa00'}
+
+            rect_groups = []
+            for i, acc in enumerate(accounts):
+                offset = (width / -2) + (i * width) if len(accounts) > 1 else 0
+                rects = ax.bar(x + offset, pnl_values[acc], width, label=acc, color=colors.get(acc, 'gray'))
+                rect_groups.append(rects)
+
+            ax.set_ylabel('Realizált PnL (USDT)', color='white', fontsize=12)
+            ax.set_title('Időszakos Realizált PnL Összesítés', fontsize=16, color='white', pad=20)
+            ax.set_xticks(x)
+            ax.set_xticklabels(periods, fontsize=11, color='lightgray')
+            ax.tick_params(axis='y', colors='white')
+            ax.legend(fontsize=12)
+            ax.grid(True, which='both', linestyle='--', linewidth=0.4, color='gray', axis='y')
+            ax.axhline(0, color='gray', linewidth=0.8) # Nulla vonal
+            plt.setp(ax.spines.values(), color='gray')
+            ax.set_facecolor('#1e1e1e')
+            fig.set_facecolor('#101010')
+
+            # Címkék hozzáadása az oszlopok tetejére
+            for rects in rect_groups:
+                for rect in rects:
+                    height = rect.get_height()
+                    ax.annotate(f'${height:,.2f}',
+                                xy=(rect.get_x() + rect.get_width() / 2, height),
+                                xytext=(0, 5 if height >= 0 else -18),
+                                textcoords="offset points",
+                                ha='center', va='bottom' if height >= 0 else 'top',
+                                color='white', fontsize=9, weight='bold')
+
+            fig.tight_layout(pad=2)
+            
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=110, bbox_inches='tight')
+            buf.seek(0)
+            plt.close(fig)
+
+            caption_text = "📊 *Realizált PnL Oszlopdiagram*\nA grafikon a különböző időszakok alatt realizált profitot és veszteséget mutatja."
+            
+            return buf, caption_text
+        except Exception as e:
+            logger.error(f"Hiba a PnL oszlopdiagram generálása közben: {e}", exc_info=True)
+            return None, "Belső hiba történt a PnL grafikon generálásakor."
+
     async def chart_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self._delete_command_message(update)
         if not MATPLOTLIB_AVAILABLE:
@@ -234,11 +331,11 @@ class TelegramBotManager:
             else:
                 filtered = [d for d in data if d]
 
-            if len(filtered) < 2: return None, f"Túl kevés adat a '{period}' időszakban."
+            if len(filtered) < 2: return None, f"Túl kevés adat a '{period}' időszakban a(z) '{account_display_name}' fiókhoz."
             
             all_equity_values = [float(p['value']) for p in filtered]
             min_equity, max_equity = min(all_equity_values), max(all_equity_values)
-            if min_equity == max_equity: return None, "Az egyenleg nem változott."
+            if min_equity == max_equity: return None, f"Az egyenleg nem változott a '{period}' időszakban."
 
             plt.style.use('dark_background'); fig, ax = plt.subplots(figsize=(12, 6))
             x_indices = list(range(len(all_equity_values)))
@@ -292,11 +389,9 @@ class TelegramBotManager:
         return self.ConversationHandler.END
         
 def run_bot_process(token: str, config: dict, data_dir: Path):
-    # 1. Naplózás beállítása
     from .logger_setup import setup_logging
     setup_logging(config, log_dir=(data_dir / "logs"))
     
-    # 2. Külső könyvtárak importálása
     global TELEGRAM_LIBS_AVAILABLE, MATPLOTLIB_AVAILABLE, Update, ContextTypes, ConversationHandler
     
     try:
@@ -304,12 +399,9 @@ def run_bot_process(token: str, config: dict, data_dir: Path):
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         from telegram.ext import Application, CommandHandler, ContextTypes as TelegramContextTypes, ConversationHandler as TelegramConversationHandler, CallbackQueryHandler
         from telegram.error import BadRequest
-        from telegram.warnings import PTBUserWarning # <-- MÓDOSÍTÁS: A figyelmeztetés osztály importálása
+        from telegram.warnings import PTBUserWarning
 
-        # --- MÓDOSÍTÁS KEZDETE: A figyelmeztetés elnémítása ---
-        # A 'per_message' figyelmeztetés szűrése, hogy ne jelenjen meg a konzolon.
         warnings.filterwarnings("ignore", category=PTBUserWarning, message="If 'per_message=False'")
-        # --- MÓDOSÍTÁS VÉGE ---
 
         Update = TelegramUpdate
         ContextTypes = TelegramContextTypes
@@ -338,7 +430,6 @@ def run_bot_process(token: str, config: dict, data_dir: Path):
     except ImportError:
         logger.warning("A 'matplotlib' csomag nincs telepítve, a chart funkció nem lesz elérhető.")
 
-    # 3. A bot indítása
     try:
         if not TELEGRAM_LIBS_AVAILABLE:
             raise ImportError("A 'python-telegram-bot' csomag nincs telepítve.")

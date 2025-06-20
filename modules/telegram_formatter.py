@@ -1,4 +1,6 @@
-# FÁJL: modules/telegram_formatter.py
+# FÁJL: modules/telegram_formatter.py (Teljes, javított kód)
+
+from collections import defaultdict
 
 def format_qty(qty_str: str) -> str:
     """Eltávolítja a felesleges .0 és .0000 végződéseket a mennyiségekről."""
@@ -13,57 +15,67 @@ def format_qty(qty_str: str) -> str:
         return qty_str
 
 def format_cycle_summary(events: list, version: str) -> str:
-    """Összeállítja a ciklus végi összefoglaló üzenetet a begyűjtött eseményekből."""
+    """
+    Összeállítja a ciklus végi összefoglaló üzenetet a begyűjtött eseményekből,
+    szimbólumok szerint csoportosítva.
+    """
     if not events:
         return ""
 
     header = f"📰 *Ciklus Összefoglaló (v{version})*\n\n"
-    sections = {
-        "opened": "📈 *Nyitások/Növelések:*\n",
-        "closed": "📉 *Zárások:*\n",
-        "sl_set": "🛡️ *Stop-Loss Módosítások:*\n"
-    }
     
+    # Események csoportosítása szimbólum szerint
+    events_by_symbol = defaultdict(list)
     for event in events:
-        event_type = event.get('type')
-        data = event.get('data')
-        
-        if event_type == 'open':
-            symbol, side, qty = data.get('symbol'), data.get('side', '').capitalize(), format_qty(data.get('qty', '0'))
-            action_text = "Növelve" if data.get('is_increase') else side
-            sections["opened"] += f"  - `{symbol}`: {action_text} {qty}\n"
-            
-        elif event_type == 'close':
-            symbol, side, qty = data.get('symbol'), data.get('side', ''), format_qty(data.get('qty', '0'))
-            
-            # --- JAVÍTÁS ---
-            # Közvetlenül lekérjük az értékeket, és kezeljük a None esetet.
-            # A 'daily_pnl' már a teljes napi PnL-t tartalmazza, a duplikált összeadást eltávolítjuk.
-            pnl = data.get('pnl') # Ez lehet None
-            daily_pnl = data.get('daily_pnl') # Ez a reporting.py alapján mindig float vagy 0
-
-            # Biztonsági ellenőrzés, ha a napi pnl valamiért None lenne
-            if daily_pnl is None:
-                daily_pnl = 0.0
-
-            pnl_str = f"Trade PnL: `${pnl:,.2f}`" if pnl is not None else "Trade PnL: $N/A"
-            daily_pnl_str = f" | Mai PnL: `${daily_pnl:,.2f}`"
-            
-            pnl_emoji = "✅" if (pnl or 0) > 0 else "❌" if (pnl or 0) < 0 else "➖"
-
-            sections["closed"] += f"  - `{symbol}` ({side}): Zárva. {pnl_emoji} {pnl_str}{daily_pnl_str}\n"
-
-        elif event_type == 'sl':
-            symbol, side, pnl_value = data.get('symbol'), data.get('side', ''), data.get('pnl_value', 0)
-            pnl_int = int(round(pnl_value, 0)) # Kerekítés egész számra
-            sections["sl_set"] += f"  - `{symbol}` ({side}): `~${pnl_int}`\n"
+        if 'symbol' in event.get('data', {}):
+             events_by_symbol[event['data']['symbol']].append(event)
 
     final_message = header
     has_content = False
-    for key, content in sections.items():
-        # Csak akkor adjuk hozzá a szekciót, ha van tartalma (a fejlécen kívül)
-        if len(content.splitlines()) > 1:
-            final_message += content + "\n"
-            has_content = True
 
-    return final_message if has_content else ""
+    for symbol, symbol_events in events_by_symbol.items():
+        # Csak akkor adjuk hozzá a szimbólum fejlécét, ha van hozzá esemény
+        if symbol_events:
+            final_message += f"⦿ `{symbol}`\n"
+            has_content = True
+        
+        for event in symbol_events:
+            event_type = event.get('type')
+            data = event.get('data')
+            
+            if event_type == 'open':
+                side = data.get('side', '')
+                side_display = "Long" if side == 'Buy' else "Short" if side == 'Sell' else side
+                qty = format_qty(data.get('qty', '0'))
+                action_text = "pozíció növelve" if data.get('is_increase') else f"{side_display} pozíció nyitva"
+                final_message += f"  - 📈 {action_text}: {qty} db\n"
+            
+            elif event_type == 'close':
+                side = data.get('side', '') # Ez a pozíció oldala (pl. Buy a long pozíciónál)
+                side_display = "Long" if side == 'Buy' else "Short" if side == 'Sell' else side
+                
+                pnl = data.get('pnl')
+                daily_pnl = data.get('daily_pnl')
+
+                if daily_pnl is None:
+                    daily_pnl = 0.0
+
+                pnl_str = f"Trade PnL: `${pnl:,.2f}`" if pnl is not None else "Trade PnL: $N/A"
+                daily_pnl_str = f"| Mai PnL: `${daily_pnl:,.2f}`"
+                pnl_emoji = "✅" if (pnl or 0) > 0 else "❌" if (pnl or 0) < 0 else "➖"
+
+                # Az olvashatóság kedvéért a PnL sorokat új sorba tördeljük behúzással
+                final_message += f"  - 📉 {side_display} pozíció zárva. {pnl_emoji}\n    `{pnl_str} {daily_pnl_str}`\n"
+
+            elif event_type == 'sl':
+                side = data.get('side', '')
+                side_display = "Long" if side == 'Buy' else "Short" if side == 'Sell' else side
+                pnl_value = data.get('pnl_value', 0)
+                pnl_int = int(round(pnl_value, 0))
+                final_message += f"  - 🛡️ SL módosítva ({side_display}): `~${pnl_int}`\n"
+        
+        # Üres sor két szimbólum között
+        final_message += "\n"
+
+    # Az üzenet végéről levágjuk a felesleges üres sorokat
+    return final_message.strip() if has_content else ""
