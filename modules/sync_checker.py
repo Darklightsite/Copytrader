@@ -1,17 +1,19 @@
-# FÁJL: modules/sync_checker.py (Teljes, ellenőrzött kód)
+# FÁJL: modules/sync_checker.py (Teljes, javított kód)
 
 import logging
 import time
 from decimal import Decimal
-from pathlib import Path
 from .api_handler import get_data
 from .telegram_sender import send_telegram_message
 from .order_handler import place_order_on_demo, _determine_position_idx
 
 logger = logging.getLogger()
 
-def _fix_discrepancies(config_data, discrepancies):
-    """Végrehajtja a pozíciók közötti eltérések javítását."""
+def _fix_discrepancies(config_data, discrepancies, pending_actions):
+    """Végrehajtja a pozíciók közötti eltérések javítását, figyelembe véve a függőben lévő műveleteket."""
+    if not discrepancies:
+        return
+
     logger.info(f"Azonnali szinkronizáció végrehajtása {len(discrepancies)} db eltérésre...")
     send_telegram_message(config_data, f"⏳ Megkezdtem a fiókok azonnali szinkronizálását ({len(discrepancies)} db eltérés)...")
     
@@ -21,6 +23,16 @@ def _fix_discrepancies(config_data, discrepancies):
         symbol = d['symbol']
         side = d.get('side') 
         qty_precision = config_data['settings']['qty_precision']
+
+        # ELLENŐRZÉS: Ha ez egy hiányzó pozíció, megnézzük, hogy van-e rá függőben lévő nyitási kérés
+        if d['type'] == 'missing_on_demo':
+            is_pending = any(
+                p['symbol'] == symbol and p['side'] == side and p['action'] == 'OPEN'
+                for p in pending_actions
+            )
+            if is_pending:
+                logger.info(f"Szinkronizációs javítás ({symbol}-{side} nyitás) kihagyva, mert egy függőben lévő esemény kezeli.")
+                continue
 
         try:
             if d['type'] == 'extra_on_demo':
@@ -62,10 +74,14 @@ def _fix_discrepancies(config_data, discrepancies):
     send_telegram_message(config_data, "✅ A fiókok közötti szinkronizálás befejeződött.")
 
 
-def check_positions_sync(config_data, data_dir, state_manager, reporting_manager):
+def check_positions_sync(config_data, state_manager, pending_actions=None):
     """
-    Ellenőrzi a fiókok szinkronját, és ha eltérést talál, azonnal elindítja a javítást.
+    Ellenőrzi a fiókok szinkronját, és ha eltérést talál, elindítja a javítást.
+    Figyelembe veszi a függőben lévő, még nem végrehajtott műveleteket.
     """
+    if pending_actions is None:
+        pending_actions = []
+
     logger.info("Fiókok szinkronjának ellenőrzése...")
     live_api, demo_api = config_data['live_api'], config_data['demo_api']
     multiplier = Decimal(str(config_data['settings']['copy_multiplier']))
@@ -82,21 +98,28 @@ def check_positions_sync(config_data, data_dir, state_manager, reporting_manager
     demo_positions = {f"{p['symbol']}-{p['side']}": p for p in demo_pos_resp.get('list', []) if float(p.get('size', 0)) > 0}
     
     discrepancies = []
-    for pos_id, live_pos in live_positions.items():
-        expected_demo_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
+    all_symbols = set(live_positions.keys()) | set(demo_positions.keys())
+
+    for pos_id in all_symbols:
+        live_pos = live_positions.get(pos_id)
+        demo_pos = demo_positions.get(pos_id)
+        symbol, side = pos_id.split('-')
+
+        if live_pos and not demo_pos:
+            expected_demo_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
+            if expected_demo_qty > 0:
+                discrepancies.append({"type": "missing_on_demo", "symbol": symbol, "side": side, "expected_demo_qty": f"{expected_demo_qty:.{qty_precision}f}"})
         
-        if pos_id in demo_positions:
-            demo_qty = Decimal(demo_positions[pos_id]['size'])
+        elif not live_pos and demo_pos:
+            discrepancies.append({"type": "extra_on_demo", "symbol": symbol, "side": side, "actual_demo_qty": demo_pos['size']})
+
+        elif live_pos and demo_pos:
+            expected_demo_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
+            demo_qty = Decimal(demo_pos['size'])
             if abs(demo_qty - expected_demo_qty) > Decimal('1e-' + str(qty_precision)):
-                discrepancies.append({"type": "size_mismatch", "symbol": live_pos['symbol'], "side": live_pos['side'], "expected_demo_qty": f"{expected_demo_qty:.{qty_precision}f}", "actual_demo_qty": f"{demo_qty:.{qty_precision}f}"})
-        else:
-            discrepancies.append({"type": "missing_on_demo", "symbol": live_pos['symbol'], "side": live_pos['side'], "expected_demo_qty": f"{expected_demo_qty:.{qty_precision}f}"})
-    
-    for pos_id, demo_pos in demo_positions.items():
-        if pos_id not in live_positions:
-            discrepancies.append({"type": "extra_on_demo", "symbol": demo_pos['symbol'], "side": demo_pos['side'], "actual_demo_qty": demo_pos['size']})
+                 discrepancies.append({"type": "size_mismatch", "symbol": symbol, "side": side, "expected_demo_qty": f"{expected_demo_qty:.{qty_precision}f}", "actual_demo_qty": f"{demo_qty:.{qty_precision}f}"})
     
     if discrepancies:
-        _fix_discrepancies(config_data, discrepancies)
+        _fix_discrepancies(config_data, discrepancies, pending_actions)
     else:
         logger.info("A fiókok tökéletes szinkronban vannak.")

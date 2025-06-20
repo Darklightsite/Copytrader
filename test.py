@@ -1,76 +1,99 @@
-# FÁJL: chart_merger.py
+# FÁJL: test_order_lookup.py (Végleges, javított teszt program)
+# Leírás: Ez a szkript kizárólag a meglévő, módosítatlan modulokat használja
+# a megadott Order ID-k részleteinek lekérdezéséhez.
 
-import json
-from pathlib import Path
+import logging
+from pprint import pprint
+import sys
+
+# A fő program moduljainak importálása a helyes nevekkel
+# A program feltételezi, hogy a 'modules' mappa a script mellett van.
+try:
+    from modules.config_loader import load_configuration
+    from modules.api_handler import make_api_request
+except ImportError as e:
+    print(f"Hiba a modulok betöltése közben: {e}")
+    print("Győződj meg róla, hogy a szkriptet a projekt gyökérkönyvtárából futtatod,")
+    print("és a 'modules' mappa a helyén van.")
+    sys.exit(1)
+
 
 # --- KONFIGURÁCIÓ ---
-# Add meg annak a mappának a nevét, ahova a régi chart fájlokat másoltad.
-SOURCE_FOLDER = "charts_to_merge"
-
-# Add meg a kimeneti fájl nevét.
-OUTPUT_FILE = "merged_chart_data.json"
+# Add meg itt a keresendő Order ID-ket.
+ORDER_IDS_TO_CHECK = [
+    '169421833',  # Az EURUSD pozíció azonosítója
+    '169422965'   # A DE40 pozíció azonosítója
+]
 # ---------------------
 
-def merge_chart_data():
+
+def setup_basic_logging():
+    """Egyszerű naplózást állít be a konzolra, hogy lássuk a háttérfolyamatokat."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s',
+        stream=sys.stdout,
+    )
+
+def run_order_investigation():
     """
-    Összefűzi egy mappában található összes chart adatfájlt,
-    eltávolítja a duplikátumokat, időrendbe rendezi, majd elmenti az eredményt.
+    Lekérdezi és kiírja a megadott Order ID-k részleteit a forrásfiókról.
     """
-    source_path = Path(SOURCE_FOLDER)
-    output_path = Path(OUTPUT_FILE)
+    print("--- Order ID Nyomozó Program ---")
+    setup_basic_logging()
 
-    if not source_path.is_dir():
-        print(f"HIBA: A forrás mappa ('{SOURCE_FOLDER}') nem található.")
-        print("Kérlek, hozd létre a mappát, és másold bele az összefűzendő .json fájlokat.")
+    # 1. Konfiguráció betöltése a fő program függvényével
+    config = load_configuration('config.ini')
+    if not config:
+        logging.error("Nem sikerült betölteni a konfigurációt. A program leáll.")
         return
 
-    all_data_points = []
-    
-    # 1. Fájlok beolvasása
-    json_files = list(source_path.glob('*.json'))
-    if not json_files:
-        print(f"HIBA: Nem található egyetlen .json fájl sem a(z) '{SOURCE_FOLDER}' mappában.")
+    # 2. A forrás ('Élő') fiók API adatainak kinyerése
+    # A config.ini alapján a te esetedben az 'Élő' fiók a 'demo_api' alatt van.
+    source_api_config = config.get('demo_api')
+    if not source_api_config:
+        logging.error("A 'demo_api' szekció nem található a konfigurációban.")
         return
-        
-    print(f"A következő {len(json_files)} fájl feldolgozása következik:")
-    for file_path in json_files:
-        print(f"  - Beolvasás: {file_path}")
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    all_data_points.extend(data)
-                else:
-                    print(f"    Figyelmeztetés: A(z) {file_path} fájl nem listát tartalmaz, kihagyom.")
-        except json.JSONDecodeError:
-            print(f"    Hiba: A(z) {file_path} fájl nem érvényes JSON, kihagyom.")
-        except Exception as e:
-            print(f"    Hiba a(z) {file_path} olvasása közben: {e}")
 
-    if not all_data_points:
-        print("Nem sikerült érvényes adatpontokat beolvasni.")
-        return
-        
-    print(f"\nÖsszesen {len(all_data_points)} adatpont beolvasva.")
+    logging.info(f"A nyomozás a '{source_api_config.get('url')}' szerveren történik.")
+    print("-" * 50)
 
-    # 2. Duplikátumok eltávolítása az időbélyeg alapján
-    unique_points = {point['time']: point for point in all_data_points if 'time' in point}
-    deduplicated_data = list(unique_points.values())
-    print(f"Duplikátumok eltávolítása után {len(deduplicated_data)} egyedi adatpont maradt.")
+    # 3. Order ID-k lekérdezése egyenként
+    for order_id in ORDER_IDS_TO_CHECK:
+        logging.info(f"Keresés a következő Order ID-re: {order_id}")
 
-    # 3. Adatok rendezése időrendbe
-    sorted_data = sorted(deduplicated_data, key=lambda p: p['time'])
-    print("Adatpontok időrendbe rendezve.")
+        # A Bybit V5 API végpontja az előzmények lekérdezésére: /v5/order/history
+        # A szűréshez használhatjuk az 'orderId' paramétert.
+        params = {
+            'category': 'linear',
+            'orderId': order_id
+        }
 
-    # 4. Eredmény mentése
-    try:
-        with open(output_path, 'w', encoding='utf-8') as f_out:
-            json.dump(sorted_data, f_out, indent=4)
-        print(f"\n✅ Siker! Az összefűzött és rendezett adatok elmentve ide: {output_path}")
-    except Exception as e:
-        print(f"\n❌ HIBA: Nem sikerült elmenteni a kimeneti fájlt. Ok: {e}")
+        # API hívás a fő program meglévő függvényével
+        response = make_api_request(
+            api_config=source_api_config,
+            endpoint="/v5/order/history",
+            method="GET",
+            params=params
+        )
+
+        # 4. Válasz feldolgozása
+        if response and response.get('retCode') == 0:
+            order_list = response.get('result', {}).get('list', [])
+            if order_list:
+                print(f"✅ A(z) {order_id} ID-jű megbízás adatai MEGTALÁLVA:")
+                # A pprint "szépen" formázva írja ki a kapott adatokat
+                pprint(order_list[0])
+            else:
+                print(f"❌ A(z) {order_id} ID-jű megbízás NEM TALÁLHATÓ a bróker rendszerében ezen a fiókon.")
+        else:
+            print(f"API hiba a(z) {order_id} lekérdezésekor. A kapott válasz:")
+            pprint(response)
+
+        print("-" * 50)
+
+    print("--- A nyomozás befejeződött. ---")
 
 
-if __name__ == '__main__':
-    merge_chart_data()
-    input("\nA művelet végzett. Nyomj Entert a kilépéshez.")
+if __name__ == "__main__":
+    run_order_investigation()

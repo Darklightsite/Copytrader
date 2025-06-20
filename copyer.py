@@ -21,7 +21,7 @@ from modules.telegram_sender import send_telegram_message
 from modules.sync_checker import check_positions_sync
 from modules.telegram_formatter import format_cycle_summary
 
-__version__ = "14.8.1 (TypeError Javítva)"
+__version__ = "14.9.0 (Race Condition Javítva)"
 
 logger = logging.getLogger()
 
@@ -76,7 +76,6 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
             params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': False, 'orderType': 'Market', 'positionIdx': pos_idx}
             
             logger.info(f"OPEN parancs előkészítve. Paraméterek: {params}")
-            # --- JAVÍTÁS: A [0] indexelés eltávolítva ---
             if place_order_on_demo(config, params):
                 state_manager.map_position(symbol, side)
                 reporting_manager.update_activity_log("copy")
@@ -88,7 +87,6 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
             params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': True, 'orderType': 'Market', 'positionIdx': pos_idx}
             
             logger.info(f"CLOSE parancs előkészítve. Paraméterek: {params}")
-            # --- JAVÍTÁS: A [0] indexelés eltávolítva ---
             if place_order_on_demo(config, params):
                 state_manager.remove_mapping(symbol, position_side)
                 closed_pnl, daily_pnl = reporting_manager.get_pnl_update_after_close(config['demo_api'], symbol)
@@ -226,6 +224,21 @@ def main():
             if new_last_id:
                 last_id_to_commit = new_last_id
             
+            # --- MÓDOSÍTÁS KEZDETE: A versenyhelyzet javítása ---
+            sync_cycle_counter += 1
+            if sync_cycle_counter >= SYNC_CHECK_INTERVAL:
+                logger.info(f"{SYNC_CHECK_INTERVAL} ciklus eltelt, mély szinkron ellenőrzés futtatása...")
+                # Lekérdezzük a függőben lévő műveleteket, mielőtt a szinkronizálást futtatnánk
+                pending_actions = order_aggregator.peek_pending_actions()
+                if pending_actions:
+                    logger.info(f"Függőben lévő műveletek átadva a szinkronizációnak: {pending_actions}")
+                
+                check_positions_sync(config_data, state_manager, pending_actions=pending_actions)
+                sync_cycle_counter = 0
+            else:
+                logger.info(f"Mély szinkron ellenőrzés kihagyva. Következő {SYNC_CHECK_INTERVAL - sync_cycle_counter} ciklus múlva fut.")
+            # --- MÓDOSÍTÁS VÉGE ---
+
             ready_orders = order_aggregator.get_ready_orders()
             if ready_orders:
                 process_aggregated_orders(ready_orders, config_data, state_manager, reporting_manager, cycle_events)
@@ -244,14 +257,6 @@ def main():
                             cycle_events.append({'type': 'sl', 'data': sl_event})
                         time.sleep(0.3)
             
-            sync_cycle_counter += 1
-            if sync_cycle_counter >= SYNC_CHECK_INTERVAL:
-                logger.info(f"{SYNC_CHECK_INTERVAL} ciklus eltelt, mély szinkron ellenőrzés futtatása...")
-                check_positions_sync(config_data, DATA_DIR, state_manager, reporting_manager)
-                sync_cycle_counter = 0
-            else:
-                logger.info(f"Mély szinkron ellenőrzés kihagyva. Következő {SYNC_CHECK_INTERVAL - sync_cycle_counter} ciklus múlva fut.")
-
             if cycle_events:
                 summary_message = format_cycle_summary(cycle_events, __version__)
                 if summary_message:
