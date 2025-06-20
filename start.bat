@@ -1,4 +1,5 @@
 @echo off
+upload.cmd
 echo Trade Masolo inditasa...
 py copyer.py
 echo.

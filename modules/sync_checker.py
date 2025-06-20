@@ -9,6 +9,7 @@ from .order_handler import place_order_on_demo, _determine_position_idx
 
 logger = logging.getLogger()
 
+# --- MÓDOSÍTÁS KEZDETE ---
 def _fix_discrepancies(config_data, discrepancies, pending_actions):
     """Végrehajtja a pozíciók közötti eltérések javítását, figyelembe véve a függőben lévő műveleteket."""
     if not discrepancies:
@@ -24,15 +25,26 @@ def _fix_discrepancies(config_data, discrepancies, pending_actions):
         side = d.get('side') 
         qty_precision = config_data['settings']['qty_precision']
 
-        # ELLENŐRZÉS: Ha ez egy hiányzó pozíció, megnézzük, hogy van-e rá függőben lévő nyitási kérés
-        if d['type'] == 'missing_on_demo':
+        # ELLENŐRZÉS: Mielőtt bármit csinálnánk, megnézzük, hogy van-e rá függőben lévő kérés.
+        # Ez egy dupla ellenőrzés a biztonság kedvéért.
+        action_type_map = {
+            'missing_on_demo': 'OPEN',
+            'extra_on_demo': 'CLOSE',
+            'size_mismatch': None # A méreteltérést komplexebben kell kezelni
+        }
+        required_action = action_type_map.get(d['type'])
+        
+        is_pending = False
+        if required_action:
             is_pending = any(
-                p['symbol'] == symbol and p['side'] == side and p['action'] == 'OPEN'
+                p['symbol'] == symbol and p['side'] == side and p['action'] == required_action
                 for p in pending_actions
             )
-            if is_pending:
-                logger.info(f"Szinkronizációs javítás ({symbol}-{side} nyitás) kihagyva, mert egy függőben lévő esemény kezeli.")
-                continue
+        
+        if is_pending:
+            logger.info(f"Szinkronizációs javítás ({symbol}-{side} {required_action}) kihagyva, mert egy függőben lévő esemény kezeli.")
+            continue
+        # --- MÓDOSÍTÁS VÉGE ---
 
         try:
             if d['type'] == 'extra_on_demo':
@@ -105,18 +117,36 @@ def check_positions_sync(config_data, state_manager, pending_actions=None):
         demo_pos = demo_positions.get(pos_id)
         symbol, side = pos_id.split('-')
 
+        # --- MÓDOSÍTÁS KEZDETE ---
+        # Ellenőrizzük, hogy van-e függőben lévő művelet az adott pozícióra
+        is_pending_open = any(p['symbol'] == symbol and p['side'] == side and p['action'] == 'OPEN' for p in pending_actions)
+        is_pending_close = any(p['symbol'] == symbol and p['side'] == side and p['action'] == 'CLOSE' for p in pending_actions)
+        # --- MÓDOSÍTÁS VÉGE ---
+
         if live_pos and not demo_pos:
+            # --- MÓDOSÍTÁS ---
+            if is_pending_open:
+                logger.info(f"Hiányzó demó pozíció ({pos_id}) észlelve, de a javítás kihagyva, mert egy függőben lévő OPEN esemény kezeli.")
+                continue
             expected_demo_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
             if expected_demo_qty > 0:
                 discrepancies.append({"type": "missing_on_demo", "symbol": symbol, "side": side, "expected_demo_qty": f"{expected_demo_qty:.{qty_precision}f}"})
         
         elif not live_pos and demo_pos:
+             # --- MÓDOSÍTÁS ---
+            if is_pending_close:
+                logger.info(f"Extra demó pozíció ({pos_id}) észlelve, de a javítás kihagyva, mert egy függőben lévő CLOSE esemény kezeli.")
+                continue
             discrepancies.append({"type": "extra_on_demo", "symbol": symbol, "side": side, "actual_demo_qty": demo_pos['size']})
 
         elif live_pos and demo_pos:
             expected_demo_qty = (Decimal(live_pos['size']) * multiplier).quantize(Decimal('1e-' + str(qty_precision)))
             demo_qty = Decimal(demo_pos['size'])
             if abs(demo_qty - expected_demo_qty) > Decimal('1e-' + str(qty_precision)):
+                 # --- MÓDOSÍTÁS ---
+                 if is_pending_open or is_pending_close:
+                     logger.info(f"Méreteltérés ({pos_id}) észlelve, de a javítás kihagyva, mert egy függőben lévő esemény kezeli.")
+                     continue
                  discrepancies.append({"type": "size_mismatch", "symbol": symbol, "side": side, "expected_demo_qty": f"{expected_demo_qty:.{qty_precision}f}", "actual_demo_qty": f"{demo_qty:.{qty_precision}f}"})
     
     if discrepancies:

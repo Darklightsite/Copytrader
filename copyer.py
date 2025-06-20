@@ -21,7 +21,7 @@ from modules.telegram_sender import send_telegram_message
 from modules.sync_checker import check_positions_sync
 from modules.telegram_formatter import format_cycle_summary
 
-__version__ = "14.9.0 (Race Condition Javítva)"
+__version__ = "14.9.1 (Race Condition Javítva)"
 
 logger = logging.getLogger()
 

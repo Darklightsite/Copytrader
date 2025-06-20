@@ -79,7 +79,8 @@ class OrderAggregator:
             del self.pending_orders[key]
 
         return ready_orders
-        
+
+    # --- MÓDOSÍTÁS KEZDETE ---
     def peek_pending_actions(self):
         """
         Visszaad egy összefoglalót a függőben lévő megbízásokról anélkül, hogy eltávolítaná őket.
@@ -104,3 +105,4 @@ class OrderAggregator:
                     'action': action
                 })
         return actions
+    # --- MÓDOSÍTÁS VÉGE ---
