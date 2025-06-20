@@ -4,23 +4,21 @@ import logging
 import json
 import io
 import asyncio
+import warnings # <-- MÓDOSÍTÁS: A 'warnings' modul importálása
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-# --- MÓDOSÍTÁS KEZDETE ---
+# --- KORÁBBI MÓDOSÍTÁS ---
 # A Telegram és Matplotlib könyvtárak importját áthelyeztük a run_bot_process függvénybe,
 # hogy a naplózás beállítása garantáltan előttük fusson le.
-
-# Globális változók a típusellenőrzéshez és a feltételes logikához
 TELEGRAM_LIBS_AVAILABLE = False
 MATPLOTLIB_AVAILABLE = False
-# Helyettesítő osztályok, hogy a kód ne dőljön el, ha a könyvtárak hiányoznak
 class Update: pass
 class ContextTypes:
     class DEFAULT_TYPE: pass
 class ConversationHandler:
     END = -1
-# --- MÓDOSÍTÁS VÉGE ---
+# --- KORÁBBI MÓDOSÍTÁS VÉGE ---
 
 logger = logging.getLogger()
 
@@ -30,12 +28,9 @@ def _linspace(start, stop, num):
     return [start + step * i for i in range(num)]
 
 class TelegramBotManager:
-    # A __init__ mostantól átveszi a szükséges Telegram osztályokat paraméterként,
-    # hogy elkerülje a globális importot.
     def __init__(self, token, config, data_dir: Path, telegram_classes):
         self.token, self.config, self.data_dir = token, config, data_dir
         
-        # Telegram osztályok kicsomagolása
         self.Update = telegram_classes['Update']
         self.InlineKeyboardButton = telegram_classes['InlineKeyboardButton']
         self.InlineKeyboardMarkup = telegram_classes['InlineKeyboardMarkup']
@@ -51,6 +46,7 @@ class TelegramBotManager:
         self._register_handlers()
 
     def _register_handlers(self):
+        # A ConversationHandler definíciója, ami a figyelmeztetést okozza
         conv_handler = self.ConversationHandler(
             entry_points=[self.CommandHandler('chart', self.chart_start)],
             states={
@@ -58,7 +54,7 @@ class TelegramBotManager:
                 self.SELECT_ACCOUNT: [self.CallbackQueryHandler(self.select_account_and_generate, pattern='^account_'), self.CallbackQueryHandler(self.back_to_period, pattern='^back_to_period$')]
             },
             fallbacks=[self.CallbackQueryHandler(self.cancel, pattern='^cancel$'), self.CommandHandler('chart', self.chart_start)],
-            per_message=False,
+            per_message=False, # Ez a beállítás okozza a figyelmeztetést
             conversation_timeout=300
         )
         self.app.add_handler(conv_handler)
@@ -226,7 +222,6 @@ class TelegramBotManager:
         return self.ConversationHandler.END
 
     def _generate_chart_in_memory(self, data, period, account_display_name):
-        # A matplotlib importot a függvényen belülre helyezzük, hogy csak akkor fusson le, ha tényleg kell
         import matplotlib.pyplot as plt
 
         try:
@@ -297,11 +292,11 @@ class TelegramBotManager:
         return self.ConversationHandler.END
         
 def run_bot_process(token: str, config: dict, data_dir: Path):
-    # 1. Naplózás beállítása, MIELŐTT bármilyen más import megtörténik
+    # 1. Naplózás beállítása
     from .logger_setup import setup_logging
     setup_logging(config, log_dir=(data_dir / "logs"))
     
-    # 2. Most már biztonságosan importálhatjuk a külső könyvtárakat
+    # 2. Külső könyvtárak importálása
     global TELEGRAM_LIBS_AVAILABLE, MATPLOTLIB_AVAILABLE, Update, ContextTypes, ConversationHandler
     
     try:
@@ -309,8 +304,13 @@ def run_bot_process(token: str, config: dict, data_dir: Path):
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         from telegram.ext import Application, CommandHandler, ContextTypes as TelegramContextTypes, ConversationHandler as TelegramConversationHandler, CallbackQueryHandler
         from telegram.error import BadRequest
+        from telegram.warnings import PTBUserWarning # <-- MÓDOSÍTÁS: A figyelmeztetés osztály importálása
 
-        # Globális változók frissítése a betöltött osztályokkal
+        # --- MÓDOSÍTÁS KEZDETE: A figyelmeztetés elnémítása ---
+        # A 'per_message' figyelmeztetés szűrése, hogy ne jelenjen meg a konzolon.
+        warnings.filterwarnings("ignore", category=PTBUserWarning, message="If 'per_message=False'")
+        # --- MÓDOSÍTÁS VÉGE ---
+
         Update = TelegramUpdate
         ContextTypes = TelegramContextTypes
         ConversationHandler = TelegramConversationHandler
@@ -334,12 +334,11 @@ def run_bot_process(token: str, config: dict, data_dir: Path):
     try:
         import matplotlib
         matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
         MATPLOTLIB_AVAILABLE = True
     except ImportError:
         logger.warning("A 'matplotlib' csomag nincs telepítve, a chart funkció nem lesz elérhető.")
 
-    # 3. A bot indítása a betöltött osztályokkal
+    # 3. A bot indítása
     try:
         if not TELEGRAM_LIBS_AVAILABLE:
             raise ImportError("A 'python-telegram-bot' csomag nincs telepítve.")
