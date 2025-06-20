@@ -21,7 +21,7 @@ from modules.telegram_sender import send_telegram_message
 from modules.sync_checker import check_positions_sync
 from modules.telegram_formatter import format_cycle_summary
 
-__version__ = "14.9.1 (Race Condition Javítva)"
+__version__ = "15.0.0 (Intelligens Szinkronizálás)"
 
 logger = logging.getLogger()
 
@@ -201,8 +201,10 @@ def main():
 
         last_id_to_commit = None
         
-        sync_cycle_counter = 0
-        SYNC_CHECK_INTERVAL = 5 
+        # --- ÚJ LOGIKA KEZDETE ---
+        inactive_cycles_counter = 0
+        MIN_INACTIVE_CYCLES_FOR_SYNC = 2 
+        # --- ÚJ LOGIKA VÉGE ---
 
         while True:
             cycle_events = []
@@ -213,37 +215,46 @@ def main():
 
             logger.info("-" * 60)
             
+            # 1. Események keresése
             activity_detected, new_last_id = main_event_loop(config_data, state_manager, order_aggregator)
             
             if activity_detected:
+                # Ha volt új esemény, lenullázzuk az inaktív ciklus számlálót
+                inactive_cycles_counter = 0
                 activity_since_last_pnl_update = True
                 aggregation_window = config_data['settings'].get('aggregation_window_seconds', 3)
                 logger.info(f"Új események észlelve, várakozás {aggregation_window + 1} mp-et az aggregációra...")
                 time.sleep(aggregation_window + 1)
+            else:
+                # Ha nem volt esemény, növeljük a számlálót
+                inactive_cycles_counter += 1
             
             if new_last_id:
                 last_id_to_commit = new_last_id
             
-            # --- MÓDOSÍTÁS KEZDETE: A versenyhelyzet javítása ---
-            sync_cycle_counter += 1
-            if sync_cycle_counter >= SYNC_CHECK_INTERVAL:
-                logger.info(f"{SYNC_CHECK_INTERVAL} ciklus eltelt, mély szinkron ellenőrzés futtatása...")
-                # Lekérdezzük a függőben lévő műveleteket, mielőtt a szinkronizálást futtatnánk
-                pending_actions = order_aggregator.peek_pending_actions()
-                if pending_actions:
-                    logger.info(f"Függőben lévő műveletek átadva a szinkronizációnak: {pending_actions}")
-                
-                check_positions_sync(config_data, state_manager, pending_actions=pending_actions)
-                sync_cycle_counter = 0
-            else:
-                logger.info(f"Mély szinkron ellenőrzés kihagyva. Következő {SYNC_CHECK_INTERVAL - sync_cycle_counter} ciklus múlva fut.")
-            # --- MÓDOSÍTÁS VÉGE ---
-
+            # 2. Aggregált megbízások feldolgozása
             ready_orders = order_aggregator.get_ready_orders()
             if ready_orders:
                 process_aggregated_orders(ready_orders, config_data, state_manager, reporting_manager, cycle_events)
                 activity_since_last_pnl_update = True
+                # Ha feldolgoztunk megbízást, az is aktivitásnak számít, ezért nullázzuk a számlálót
+                inactive_cycles_counter = 0
 
+            # --- ÚJ SZINKRONIZÁLÁSI LOGIKA KEZDETE ---
+            # Csak akkor futtatunk mély szinkront, ha a rendszer már legalább 2 cikluson keresztül inaktív volt.
+            if inactive_cycles_counter >= MIN_INACTIVE_CYCLES_FOR_SYNC:
+                logger.info(f"{inactive_cycles_counter} inaktív ciklus telt el, mély szinkron ellenőrzés futtatása...")
+                pending_actions = order_aggregator.peek_pending_actions()
+                if pending_actions:
+                    logger.warning(f"Szinkronizálás futtatása közben függőben lévő akciók: {pending_actions}")
+                
+                check_positions_sync(config_data, state_manager, pending_actions=pending_actions)
+                inactive_cycles_counter = 0 # Szinkron után lenullázzuk, hogy újra kezdje a számolást.
+            else:
+                logger.info(f"Mély szinkron ellenőrzés kihagyva. Inaktív ciklusok: {inactive_cycles_counter}/{MIN_INACTIVE_CYCLES_FOR_SYNC}.")
+            # --- ÚJ SZINKRONIZÁLÁSI LOGIKA VÉGE ---
+
+            # 4. Riportok és SL szintek frissítése
             reporting_manager.update_reports(pnl_update_needed=activity_since_last_pnl_update)
             if activity_since_last_pnl_update:
                 activity_since_last_pnl_update = False
