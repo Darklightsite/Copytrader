@@ -47,7 +47,13 @@ def format_cycle_summary(events: list, version: str) -> str:
                 side = data.get('side', '')
                 side_display = "Long" if side == 'Buy' else "Short" if side == 'Sell' else side
                 qty = format_qty(data.get('qty', '0'))
-                action_text = "pozíció növelve" if data.get('is_increase') else f"{side_display} pozíció nyitva"
+                
+                # JAVÍTÁS: Különbséget teszünk a nyitás és a növelés között, és mindkét esetben kiírjuk az irányt
+                if data.get('is_increase'):
+                    action_text = f"{side_display} növelés" # Pl.: "Long növelés"
+                else:
+                    action_text = f"{side_display} nyitás" # Pl.: "Short nyitás"
+                
                 final_message += f"  - 📈 {action_text}: {qty} db\n"
             
             elif event_type == 'close':

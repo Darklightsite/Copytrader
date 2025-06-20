@@ -45,7 +45,7 @@ class TelegramBotManager:
         self._register_handlers()
 
     def _register_handlers(self):
-        # Teljesen új, többlépcsős ConversationHandler a /chart parancshoz
+        # Többlépcsős ConversationHandler a /chart parancshoz
         conv_handler = self.ConversationHandler(
             entry_points=[self.CommandHandler('chart', self.chart_start)],
             states={
@@ -118,7 +118,6 @@ class TelegramBotManager:
                 await context.bot.send_message(chat_id=update.effective_chat.id, text="Hiba: `status.json` nem található.", parse_mode='Markdown')
                 return
             
-            # A /pnl parancshoz hasonlóan a 'summary' kulcsot használjuk
             live_daily_pnl = pnl_report.get("Élő", {}).get("summary", {}).get("periods", {}).get("Mai", {}).get("pnl", 0.0)
             demo_daily_pnl = pnl_report.get("Demó", {}).get("summary", {}).get("periods", {}).get("Mai", {}).get("pnl", 0.0)
 
@@ -169,7 +168,6 @@ class TelegramBotManager:
         
         for account in ["Élő", "Demó"]:
             if account_data := pnl_data.get(account):
-                # Az új struktúrához igazítás ('summary' kulcs használata)
                 if summary_data := account_data.get('summary'):
                     start_date_info = summary_data.get('start_date', 'N/A')
                     message += f"⦿ *{account} Számla* (Kezdet: {start_date_info})\n"
@@ -181,10 +179,10 @@ class TelegramBotManager:
                     message += "\n"
         await context.bot.send_message(chat_id=update.effective_chat.id, text=message, parse_mode='Markdown', disable_notification=True)
     
-    # --- ÁTALAKÍTOTT GRAFIKON FUNKCIÓK ---
+    # --- GRAFIKON FUNKCIÓK ---
 
     async def chart_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """A /chart beszélgetés indítása vagy újraindítása."""
+        """A /chart beszélgetés indítása vagy újraindítása (Fiókválasztás)."""
         await self._delete_command_message(update)
         
         if not MATPLOTLIB_AVAILABLE:
@@ -213,9 +211,9 @@ class TelegramBotManager:
         query = update.callback_query
         await query.answer()
 
-        # Ha a "back_to_chart_type" gombról jövünk, a fiók már be van állítva
-        if not query.data.startswith("back_to_chart_type"):
-            context.user_data['account'] = query.data.split('_')[1]
+        # Ha a "back_to_chart_type" gombról jövünk, a fiók már be van állítva, nem írjuk felül.
+        if 'account' not in context.user_data:
+             context.user_data['account'] = query.data.split('_')[1]
 
         keyboard = [
             [self.InlineKeyboardButton("Egyenleggörbe", callback_data='chart_type_balance')],
@@ -230,11 +228,12 @@ class TelegramBotManager:
         """Diagramtípus kiválasztása után a periódus bekérése."""
         query = update.callback_query
         await query.answer()
-        context.user_data['chart_type'] = query.data.split('_')[1]
+        
+        # JAVÍTÁS: A callback 'chart_type_pnl' -> ['chart', 'type', 'pnl']. A helyes index a 2.
+        context.user_data['chart_type'] = query.data.split('_')[2]
         
         chart_type = context.user_data['chart_type']
         
-        # A periódusok a diagram típusától függnek
         if chart_type == 'balance':
             keyboard = [
                 [self.InlineKeyboardButton("Napi", callback_data='period_daily'), self.InlineKeyboardButton("Heti", callback_data='period_weekly')],
@@ -245,8 +244,8 @@ class TelegramBotManager:
                 [self.InlineKeyboardButton("Heti", callback_data='period_weekly'), self.InlineKeyboardButton("Havi", callback_data='period_monthly')],
                 [self.InlineKeyboardButton("Összes", callback_data='period_all')]
             ]
-        else: # Hiba esetére
-            await query.edit_message_text("Ismeretlen diagramtípus.")
+        else:
+            await query.edit_message_text("Hiba: Ismeretlen diagramtípus került kiválasztásra.")
             return self.ConversationHandler.END
 
         keyboard.append([self.InlineKeyboardButton("« Vissza (Típus)", callback_data='back_to_chart_type')])
@@ -299,11 +298,10 @@ class TelegramBotManager:
         
         try:
             days_map = {'daily': 1, 'weekly': 7, 'monthly': 30}
-            days = days_map.get(period)
-            
             title_period_map = {'daily': 'Utolsó 24 óra', 'weekly': 'Utolsó 7 nap', 'monthly': 'Utolsó 30 nap'}
             title_period = title_period_map.get(period, 'Teljes időszak')
-
+            
+            days = days_map.get(period)
             if days:
                 start_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
                 filtered = [d for d in data if d and d.get('time', 0) >= start_ts]
@@ -355,13 +353,11 @@ class TelegramBotManager:
             if not raw_history:
                 return None, f"Nincsenek elérhető előzmény adatok a(z) '{account_display_name}' fiókhoz."
 
-            # PNL adatok aggregálása napokra
             daily_pnl = defaultdict(float)
             for trade in raw_history:
                 day_str = datetime.fromtimestamp(int(trade['createdTime']) / 1000, tz=timezone.utc).strftime('%Y-%m-%d')
                 daily_pnl[day_str] += float(trade.get('closedPnl', 0))
 
-            # Adatok szűrése periódus szerint
             days_map = {'weekly': 7, 'monthly': 30}
             title_map = {'weekly': 'Utolsó 7 nap', 'monthly': 'Utolsó 30 nap', 'all': 'Teljes időszak'}
             title_period = title_map.get(period)
