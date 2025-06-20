@@ -41,7 +41,7 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
             close_reopen_pairs.add(symbol)
     
     if close_reopen_pairs:
-        logger.info(f"Zárás-újraindítás szekvenciák észlelve: {list(close_reopen_pairs)}. Extra várakozás lesz alkalmazva a nyitások előtt.")
+        logger.info(f"Zárás-újraindítás szekvenciák észlelve: {list(close_reopen_pairs)}. A Telegram üzenetben 'nyitás' fog megjelenni 'növelés' helyett.")
 
     for i, order in enumerate(orders):
         logger.info(f"--- Aggregált megbízás feldolgozása ({i+1}/{len(orders)}) ---")
@@ -63,7 +63,13 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
         qty_str = f"{qty:.{config['settings']['qty_precision']}f}"
 
         if action == "OPEN":
+            # JAVÍTÁS: A 'is_increase' állapot felülbírálása, ha újraindítás történik.
+            # Ez biztosítja, hogy a Telegram üzenet helyesen "nyitás"-t mutasson.
             is_increase = order.get('is_increase', False)
+            if symbol in close_reopen_pairs:
+                logger.info(f"'{symbol}' újraindításként azonosítva. A 'növelés' felülbírálva 'nyitás'-ra az eseményriportban.")
+                is_increase = False
+            
             if not is_increase:
                 live_pos_resp = get_data(config['live_api'], "/v5/position/list", {'category': 'linear', 'symbol': symbol})
                 if live_pos_resp and live_pos_resp.get('list'):
@@ -79,6 +85,7 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
             if place_order_on_demo(config, params):
                 state_manager.map_position(symbol, side)
                 reporting_manager.update_activity_log("copy")
+                # A (potenciálisan javított) 'is_increase' állapotot adjuk tovább
                 cycle_events.append({'type': 'open', 'data': {'symbol': symbol, 'side': side, 'qty': qty_str, 'is_increase': is_increase}})
 
         elif action == "CLOSE":
@@ -164,7 +171,7 @@ def main():
     global logger
     logger = logging.getLogger()
     
-    bot_process = None # Előre definiáljuk, hogy a finally blokkban biztosan létezzen
+    bot_process = None
     try: 
         logger.info(f"TRADE MÁSOLÓ INDUL - Verzió: {__version__}")
         
@@ -269,7 +276,6 @@ def main():
 
             interval = config_data['settings']['loop_interval']
             
-            # --- MÓDOSÍTÁS 1: Robusztusabb várakozási ciklus ---
             logger.info(f"--- Ciklus vége, várakozás {interval} másodpercet... (aktív várakozás) ---")
             for _ in range(interval):
                 time.sleep(1)
@@ -283,7 +289,6 @@ def main():
         if 'config_data' in locals():
             send_telegram_message(config_data, f"💥 *KRITIKUS HIBA* 💥\n\nA program váratlan hiba miatt leállt:\n`{e}`")
     finally:
-        # --- MÓDOSÍTÁS 2: Robusztusabb processz leállítás ---
         if bot_process and bot_process.is_alive():
             logger.info("Bot processz leállításának megkísérlése...")
             bot_process.terminate()
