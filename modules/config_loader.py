@@ -1,4 +1,4 @@
-# FÁJL: modules/config_loader.py (Teljes, javított és véglegesített kód)
+# FÁJL: modules/config_loader.py (Teljes, javított kód)
 
 import configparser
 import logging
@@ -61,8 +61,6 @@ def load_configuration(path='config.ini'):
         }
 
         # Settings Szekció
-        # --- JAVÍTÁS: A kulcsok mostantól kisbetűsek, hogy megfeleljenek a beküldött config fájlnak ---
-        # --- és a 'symbolstocopy' helyes kezelése ---
         sl_tiers_str = parser.get('settings', 'sl_loss_tiers_usd', fallback='10, 20, 30')
         
         symbols_raw = parser.get('settings', 'symbolstocopy', fallback='')
@@ -77,7 +75,8 @@ def load_configuration(path='config.ini'):
             'log_rotation_backup_count': parser.getint('settings', 'logrotationbackupcount', fallback=14),
             'loop_interval': parser.getint('settings', 'loopintervalseconds', fallback=120),
             'symbols_to_copy': symbols_list,
-            'log_level': parser.get('settings', 'loglevel', fallback='INFO'),
+            'loglevel_main': parser.get('settings', 'loglevel_main', fallback='INFO'),
+            'loglevel_bot': parser.get('settings', 'loglevel_bot', fallback='WARNING'),
             'clear_log_on_startup': parser.getboolean('settings', 'clearlogonstartup', fallback=True),
             'copy_multiplier': parser.getfloat('settings', 'copy_multiplier', fallback=10.0),
             'qty_precision': parser.getint('settings', 'qty_precision', fallback=4),

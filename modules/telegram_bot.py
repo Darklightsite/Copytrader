@@ -1,4 +1,4 @@
-# FÁJL: modules/telegram_bot.py
+# FÁJL: modules/telegram_bot.py (Teljes, javított kód)
 
 import logging
 import json
@@ -7,30 +7,20 @@ import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-try:
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-    from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, CallbackQueryHandler
-    from telegram.error import BadRequest
-    TELEGRAM_LIBS_AVAILABLE = True
-except ImportError:
-    TELEGRAM_LIBS_AVAILABLE = False
-    class Update: pass
-    class ContextTypes:
-        class DEFAULT_TYPE: pass
-    class ConversationHandler:
-        END = -1
+# --- MÓDOSÍTÁS KEZDETE ---
+# A Telegram és Matplotlib könyvtárak importját áthelyeztük a run_bot_process függvénybe,
+# hogy a naplózás beállítása garantáltan előttük fusson le.
 
-try:
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
-
-# Mivel a szinkronizáció automatikus, ezekre már nincs szükség
-# from .sync_checker import handle_sync_action
+# Globális változók a típusellenőrzéshez és a feltételes logikához
+TELEGRAM_LIBS_AVAILABLE = False
+MATPLOTLIB_AVAILABLE = False
+# Helyettesítő osztályok, hogy a kód ne dőljön el, ha a könyvtárak hiányoznak
+class Update: pass
+class ContextTypes:
+    class DEFAULT_TYPE: pass
+class ConversationHandler:
+    END = -1
+# --- MÓDOSÍTÁS VÉGE ---
 
 logger = logging.getLogger()
 
@@ -40,36 +30,46 @@ def _linspace(start, stop, num):
     return [start + step * i for i in range(num)]
 
 class TelegramBotManager:
-    def __init__(self, token, config, data_dir: Path):
-        if not TELEGRAM_LIBS_AVAILABLE:
-            raise ImportError("A 'python-telegram-bot' csomag nincs telepítve.")
+    # A __init__ mostantól átveszi a szükséges Telegram osztályokat paraméterként,
+    # hogy elkerülje a globális importot.
+    def __init__(self, token, config, data_dir: Path, telegram_classes):
         self.token, self.config, self.data_dir = token, config, data_dir
-        self.app = Application.builder().token(self.token).build()
+        
+        # Telegram osztályok kicsomagolása
+        self.Update = telegram_classes['Update']
+        self.InlineKeyboardButton = telegram_classes['InlineKeyboardButton']
+        self.InlineKeyboardMarkup = telegram_classes['InlineKeyboardMarkup']
+        self.Application = telegram_classes['Application']
+        self.CommandHandler = telegram_classes['CommandHandler']
+        self.ContextTypes = telegram_classes['ContextTypes']
+        self.ConversationHandler = telegram_classes['ConversationHandler']
+        self.CallbackQueryHandler = telegram_classes['CallbackQueryHandler']
+        self.BadRequest = telegram_classes['BadRequest']
+
+        self.app = self.Application.builder().token(self.token).build()
         self.SELECT_PERIOD, self.SELECT_ACCOUNT = range(2)
         self._register_handlers()
 
     def _register_handlers(self):
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('chart', self.chart_start)],
+        conv_handler = self.ConversationHandler(
+            entry_points=[self.CommandHandler('chart', self.chart_start)],
             states={
-                self.SELECT_PERIOD: [CallbackQueryHandler(self.select_period, pattern='^period_')],
-                self.SELECT_ACCOUNT: [CallbackQueryHandler(self.select_account_and_generate, pattern='^account_'), CallbackQueryHandler(self.back_to_period, pattern='^back_to_period$')]
+                self.SELECT_PERIOD: [self.CallbackQueryHandler(self.select_period, pattern='^period_')],
+                self.SELECT_ACCOUNT: [self.CallbackQueryHandler(self.select_account_and_generate, pattern='^account_'), self.CallbackQueryHandler(self.back_to_period, pattern='^back_to_period$')]
             },
-            fallbacks=[CallbackQueryHandler(self.cancel, pattern='^cancel$'), CommandHandler('chart', self.chart_start)],
+            fallbacks=[self.CallbackQueryHandler(self.cancel, pattern='^cancel$'), self.CommandHandler('chart', self.chart_start)],
             per_message=False,
             conversation_timeout=300
         )
         self.app.add_handler(conv_handler)
-        self.app.add_handler(CommandHandler(["start", "help"], self.start_command))
-        self.app.add_handler(CommandHandler("status", self.status_command))
-        self.app.add_handler(CommandHandler("pnl", self.pnl_command))
-        # A sync_action gombkezelőt eltávolítottuk, mert a szinkron már automata
-        # self.app.add_handler(CallbackQueryHandler(self.button_callback_handler))
+        self.app.add_handler(self.CommandHandler(["start", "help"], self.start_command))
+        self.app.add_handler(self.CommandHandler("status", self.status_command))
+        self.app.add_handler(self.CommandHandler("pnl", self.pnl_command))
 
     def run(self):
         logger.info("Telegram bot processz indul...")
         try:
-            self.app.run_polling(timeout=60, allowed_updates=Update.ALL_TYPES)
+            self.app.run_polling(timeout=60, allowed_updates=self.Update.ALL_TYPES)
         except Exception as e:
             logger.critical("Hiba a Telegram bot futása közben: %s", e, exc_info=True)
         logger.info("Telegram bot processz leállt.")
@@ -83,10 +83,9 @@ class TelegramBotManager:
         except (json.JSONDecodeError, IOError): return default_data
     
     async def _delete_command_message(self, update: Update):
-        """Segédfunkció a parancsot tartalmazó üzenet törlésére."""
         try:
             await update.message.delete()
-        except BadRequest as e:
+        except self.BadRequest as e:
             if "message to delete not found" not in str(e).lower():
                 logger.warning(f"Nem sikerült törölni a parancsüzenetet (valószínűleg nincs admin jog): {e}")
         except Exception as e:
@@ -178,14 +177,14 @@ class TelegramBotManager:
         await self._delete_command_message(update)
         if not MATPLOTLIB_AVAILABLE:
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Grafikon funkció nem elérhető: 'matplotlib' csomag hiányzik.")
-            return ConversationHandler.END
+            return self.ConversationHandler.END
         
         keyboard = [
-            [InlineKeyboardButton("Napi", callback_data='period_daily'), InlineKeyboardButton("Heti", callback_data='period_weekly')],
-            [InlineKeyboardButton("Havi", callback_data='period_monthly'), InlineKeyboardButton("Összes", callback_data='period_all')],
-            [InlineKeyboardButton("Mégse", callback_data='cancel')]
+            [self.InlineKeyboardButton("Napi", callback_data='period_daily'), self.InlineKeyboardButton("Heti", callback_data='period_weekly')],
+            [self.InlineKeyboardButton("Havi", callback_data='period_monthly'), self.InlineKeyboardButton("Összes", callback_data='period_all')],
+            [self.InlineKeyboardButton("Mégse", callback_data='cancel')]
         ]
-        await context.bot.send_message(chat_id=update.effective_chat.id, text='Milyen időszakról szeretnél grafikont?', reply_markup=InlineKeyboardMarkup(keyboard))
+        await context.bot.send_message(chat_id=update.effective_chat.id, text='Milyen időszakról szeretnél grafikont?', reply_markup=self.InlineKeyboardMarkup(keyboard))
         return self.SELECT_PERIOD
 
     async def select_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -193,10 +192,10 @@ class TelegramBotManager:
         await query.answer()
         context.user_data['period'] = query.data.split('_')[1]
         keyboard = [
-            [InlineKeyboardButton("Élő", callback_data='account_Élő'), InlineKeyboardButton("Demó", callback_data='account_Demó')],
-            [InlineKeyboardButton("Vissza", callback_data='back_to_period'), InlineKeyboardButton("Mégse", callback_data='cancel')]
+            [self.InlineKeyboardButton("Élő", callback_data='account_Élő'), self.InlineKeyboardButton("Demó", callback_data='account_Demó')],
+            [self.InlineKeyboardButton("Vissza", callback_data='back_to_period'), self.InlineKeyboardButton("Mégse", callback_data='cancel')]
         ]
-        await query.edit_message_text("Melyik számláról?", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("Melyik számláról?", reply_markup=self.InlineKeyboardMarkup(keyboard))
         return self.SELECT_ACCOUNT
 
     async def select_account_and_generate(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -224,9 +223,12 @@ class TelegramBotManager:
             await context.bot.send_message(chat_id=query.message.chat_id, text="❌ Hiba történt a grafikon készítésekor.")
         finally:
             context.user_data.clear()
-        return ConversationHandler.END
+        return self.ConversationHandler.END
 
     def _generate_chart_in_memory(self, data, period, account_display_name):
+        # A matplotlib importot a függvényen belülre helyezzük, hogy csak akkor fusson le, ha tényleg kell
+        import matplotlib.pyplot as plt
+
         try:
             days_map = {'daily': 1, 'weekly': 7, 'monthly': 30}
             days = days_map.get(period)
@@ -280,11 +282,11 @@ class TelegramBotManager:
         query = update.callback_query
         await query.answer()
         keyboard = [
-            [InlineKeyboardButton("Napi", callback_data='period_daily'), InlineKeyboardButton("Heti", callback_data='period_weekly')],
-            [InlineKeyboardButton("Havi", callback_data='period_monthly'), InlineKeyboardButton("Összes", callback_data='period_all')],
-            [InlineKeyboardButton("Mégse", callback_data='cancel')]
+            [self.InlineKeyboardButton("Napi", callback_data='period_daily'), self.InlineKeyboardButton("Heti", callback_data='period_weekly')],
+            [self.InlineKeyboardButton("Havi", callback_data='period_monthly'), self.InlineKeyboardButton("Összes", callback_data='period_all')],
+            [self.InlineKeyboardButton("Mégse", callback_data='cancel')]
         ]
-        await query.edit_message_text('Milyen időszakról szeretnél grafikont?', reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text('Milyen időszakról szeretnél grafikont?', reply_markup=self.InlineKeyboardMarkup(keyboard))
         return self.SELECT_PERIOD
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -292,15 +294,59 @@ class TelegramBotManager:
         await query.answer()
         await query.edit_message_text("Művelet megszakítva.")
         context.user_data.clear()
-        return ConversationHandler.END
+        return self.ConversationHandler.END
         
 def run_bot_process(token: str, config: dict, data_dir: Path):
+    # 1. Naplózás beállítása, MIELŐTT bármilyen más import megtörténik
     from .logger_setup import setup_logging
     setup_logging(config, log_dir=(data_dir / "logs"))
+    
+    # 2. Most már biztonságosan importálhatjuk a külső könyvtárakat
+    global TELEGRAM_LIBS_AVAILABLE, MATPLOTLIB_AVAILABLE, Update, ContextTypes, ConversationHandler
+    
     try:
-        bot_manager = TelegramBotManager(token=token, config=config, data_dir=data_dir)
+        from telegram import Update as TelegramUpdate
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from telegram.ext import Application, CommandHandler, ContextTypes as TelegramContextTypes, ConversationHandler as TelegramConversationHandler, CallbackQueryHandler
+        from telegram.error import BadRequest
+
+        # Globális változók frissítése a betöltött osztályokkal
+        Update = TelegramUpdate
+        ContextTypes = TelegramContextTypes
+        ConversationHandler = TelegramConversationHandler
+        
+        telegram_classes = {
+            'Update': TelegramUpdate,
+            'InlineKeyboardButton': InlineKeyboardButton,
+            'InlineKeyboardMarkup': InlineKeyboardMarkup,
+            'Application': Application,
+            'CommandHandler': CommandHandler,
+            'ContextTypes': TelegramContextTypes,
+            'ConversationHandler': TelegramConversationHandler,
+            'CallbackQueryHandler': CallbackQueryHandler,
+            'BadRequest': BadRequest,
+        }
+        TELEGRAM_LIBS_AVAILABLE = True
+    except ImportError:
+        logger.warning("A 'python-telegram-bot' csomag nincs telepítve, a bot nem indul el.")
+        return
+
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        MATPLOTLIB_AVAILABLE = True
+    except ImportError:
+        logger.warning("A 'matplotlib' csomag nincs telepítve, a chart funkció nem lesz elérhető.")
+
+    # 3. A bot indítása a betöltött osztályokkal
+    try:
+        if not TELEGRAM_LIBS_AVAILABLE:
+            raise ImportError("A 'python-telegram-bot' csomag nincs telepítve.")
+        
+        bot_manager = TelegramBotManager(token=token, config=config, data_dir=data_dir, telegram_classes=telegram_classes)
         bot_manager.run()
     except ImportError as e:
         logger.warning(f"A Telegram bot nem indul el: {e}")
     except Exception as e:
-        logger.critical(f"A Telegram bot processz hiba: {e}", exc_info=True)
+        logger.critical(f"A Telegram bot processz hiba miatt leállt: {e}", exc_info=True)
