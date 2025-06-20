@@ -380,31 +380,28 @@ class TelegramBotManager:
             colors = ['#2ca02c' if v >= 0 else '#d62728' for v in values]
             bars = ax.bar(labels, values, color=colors)
             
+            # --- MÓDOSÍTÁS KEZDETE ---
+            # Oszlopok feliratozása az értékükkel
             for bar in bars:
                 yval = bar.get_height()
-                
+
                 if yval == 0:
                     continue
 
-                vertical_alignment = 'top' if yval > 0 else 'bottom'
-                
-                y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
-                offset = y_range * 0.015
+                # A kiírt szöveg formázása: dollárjel és egész számra kerekítés
+                label_text = f"${int(round(yval, 0))}"
 
-                y_position = yval - offset if yval > 0 else yval + offset
-                
-                label_text = f"{int(round(yval, 0))}"
-                
                 ax.text(
-                    x=bar.get_x() + bar.get_width() / 2.0,
-                    y=y_position,
-                    s=label_text,
-                    ha='center',
-                    va=vertical_alignment,
-                    color='white',
-                    fontsize=9,
-                    fontweight='bold'
+                    x=bar.get_x() + bar.get_width() / 2.0,  # X pozíció (vízszintesen középen)
+                    y=yval / 2,                             # Y pozíció (függőlegesen középen)
+                    s=label_text,                           # A kiírandó szöveg
+                    ha='center',                            # Vízszintes igazítás (középre)
+                    va='center',                            # Függőleges igazítás (középre)
+                    color='white',                          # Szöveg színe
+                    fontsize=14,                            # Nagyobb betűméret
+                    fontweight='bold'                       # Félkövér
                 )
+            # --- MÓDOSÍTÁS VÉGE ---
 
             ax.set_title(f'Napi Realizált PnL - {account_display_name} ({title_period})', fontsize=16, color='white', pad=20)
             ax.set_ylabel('PnL (USDT)', color='white')
