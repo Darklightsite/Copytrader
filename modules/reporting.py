@@ -178,8 +178,22 @@ class ReportingManager:
         self._save_json(self.status_file, status_payload)
 
     def _update_pnl_report(self, live_data, demo_data):
-        pnl_report_payload = {"Élő": self._calculate_periodic_pnl(live_data['pnl_history']),"Demó": self._calculate_periodic_pnl(demo_data['pnl_history'])}
+        """
+        Frissíti a PnL riportot, elmentve az aggregált adatokat és a nyers
+        tranzakciós listát is a napokra bontott PnL grafikonhoz.
+        """
+        pnl_report_payload = {
+            "Élő": {
+                "summary": self._calculate_periodic_pnl(live_data['pnl_history']),
+                "raw_history": live_data['pnl_history']
+            },
+            "Demó": {
+                "summary": self._calculate_periodic_pnl(demo_data['pnl_history']),
+                "raw_history": demo_data['pnl_history']
+            }
+        }
         self._save_json(self.pnl_report_file, pnl_report_payload)
+        logger.info("PnL riport (aggregált és nyers) sikeresen frissítve.")
 
     def _calculate_periodic_pnl(self, pnl_history):
         now_utc, today_utc = datetime.now(timezone.utc), datetime.now(timezone.utc).date()
@@ -205,7 +219,6 @@ class ReportingManager:
         """
         closed_pnl = None
         
-        # JAVÍTÁS: Újrapróbálkozási logika a PnL lekérdezéséhez
         for i in range(4): # Max 4 próbálkozás
             try:
                 start_ms_trade = int((datetime.now(timezone.utc) - timedelta(minutes=15)).timestamp() * 1000)
