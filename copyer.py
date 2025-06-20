@@ -21,7 +21,7 @@ from modules.telegram_sender import send_telegram_message
 from modules.sync_checker import check_positions_sync
 from modules.telegram_formatter import format_cycle_summary
 
-__version__ = "15.0.0 (Intelligens Szinkronizálás)"
+__version__ = "15.1.0 (Robusztus Várakozás és Leállítás)"
 
 logger = logging.getLogger()
 
@@ -164,6 +164,7 @@ def main():
     global logger
     logger = logging.getLogger()
     
+    bot_process = None # Előre definiáljuk, hogy a finally blokkban biztosan létezzen
     try: 
         logger.info(f"TRADE MÁSOLÓ INDUL - Verzió: {__version__}")
         
@@ -171,7 +172,6 @@ def main():
         
         send_telegram_message(config_data, f"🚀 *Trade Másoló Indul*\nVerzió: `{__version__}`")
         
-        bot_process = None
         if config_data.get('telegram', {}).get('bot_token'):
             from modules.telegram_bot import run_bot_process
             bot_process = multiprocessing.Process(
@@ -201,10 +201,8 @@ def main():
 
         last_id_to_commit = None
         
-        # --- ÚJ LOGIKA KEZDETE ---
         inactive_cycles_counter = 0
         MIN_INACTIVE_CYCLES_FOR_SYNC = 2 
-        # --- ÚJ LOGIKA VÉGE ---
 
         while True:
             cycle_events = []
@@ -215,33 +213,26 @@ def main():
 
             logger.info("-" * 60)
             
-            # 1. Események keresése
             activity_detected, new_last_id = main_event_loop(config_data, state_manager, order_aggregator)
             
             if activity_detected:
-                # Ha volt új esemény, lenullázzuk az inaktív ciklus számlálót
                 inactive_cycles_counter = 0
                 activity_since_last_pnl_update = True
                 aggregation_window = config_data['settings'].get('aggregation_window_seconds', 3)
                 logger.info(f"Új események észlelve, várakozás {aggregation_window + 1} mp-et az aggregációra...")
                 time.sleep(aggregation_window + 1)
             else:
-                # Ha nem volt esemény, növeljük a számlálót
                 inactive_cycles_counter += 1
             
             if new_last_id:
                 last_id_to_commit = new_last_id
             
-            # 2. Aggregált megbízások feldolgozása
             ready_orders = order_aggregator.get_ready_orders()
             if ready_orders:
                 process_aggregated_orders(ready_orders, config_data, state_manager, reporting_manager, cycle_events)
                 activity_since_last_pnl_update = True
-                # Ha feldolgoztunk megbízást, az is aktivitásnak számít, ezért nullázzuk a számlálót
                 inactive_cycles_counter = 0
 
-            # --- ÚJ SZINKRONIZÁLÁSI LOGIKA KEZDETE ---
-            # Csak akkor futtatunk mély szinkront, ha a rendszer már legalább 2 cikluson keresztül inaktív volt.
             if inactive_cycles_counter >= MIN_INACTIVE_CYCLES_FOR_SYNC:
                 logger.info(f"{inactive_cycles_counter} inaktív ciklus telt el, mély szinkron ellenőrzés futtatása...")
                 pending_actions = order_aggregator.peek_pending_actions()
@@ -249,12 +240,10 @@ def main():
                     logger.warning(f"Szinkronizálás futtatása közben függőben lévő akciók: {pending_actions}")
                 
                 check_positions_sync(config_data, state_manager, pending_actions=pending_actions)
-                inactive_cycles_counter = 0 # Szinkron után lenullázzuk, hogy újra kezdje a számolást.
+                inactive_cycles_counter = 0
             else:
                 logger.info(f"Mély szinkron ellenőrzés kihagyva. Inaktív ciklusok: {inactive_cycles_counter}/{MIN_INACTIVE_CYCLES_FOR_SYNC}.")
-            # --- ÚJ SZINKRONIZÁLÁSI LOGIKA VÉGE ---
 
-            # 4. Riportok és SL szintek frissítése
             reporting_manager.update_reports(pnl_update_needed=activity_since_last_pnl_update)
             if activity_since_last_pnl_update:
                 activity_since_last_pnl_update = False
@@ -279,8 +268,11 @@ def main():
                 last_id_to_commit = None
 
             interval = config_data['settings']['loop_interval']
-            logger.info(f"--- Ciklus vége, várakozás {interval} másodpercet... ---")
-            time.sleep(interval)
+            
+            # --- MÓDOSÍTÁS 1: Robusztusabb várakozási ciklus ---
+            logger.info(f"--- Ciklus vége, várakozás {interval} másodpercet... (aktív várakozás) ---")
+            for _ in range(interval):
+                time.sleep(1)
             
     except KeyboardInterrupt:
         logger.info("Program leállítva (Ctrl+C).")
@@ -291,10 +283,16 @@ def main():
         if 'config_data' in locals():
             send_telegram_message(config_data, f"💥 *KRITIKUS HIBA* 💥\n\nA program váratlan hiba miatt leállt:\n`{e}`")
     finally:
-        if 'bot_process' in locals() and bot_process and bot_process.is_alive():
-            logger.info("Bot processz leállítása a finally blokkban...")
+        # --- MÓDOSÍTÁS 2: Robusztusabb processz leállítás ---
+        if bot_process and bot_process.is_alive():
+            logger.info("Bot processz leállításának megkísérlése...")
             bot_process.terminate()
-            bot_process.join()
+            logger.info("Várakozás a bot processz leállására (max 5 mp)...")
+            bot_process.join(timeout=5)
+            if bot_process.is_alive():
+                logger.warning("A bot processz nem állt le a határidőn belül. A fő program ennek ellenére kilép.")
+            else:
+                logger.info("Bot processz sikeresen leállítva.")
         logger.info("Fő program leállt.")
 
 if __name__ == "__main__":
