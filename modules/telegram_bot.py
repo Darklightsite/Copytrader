@@ -229,7 +229,6 @@ class TelegramBotManager:
         query = update.callback_query
         await query.answer()
         
-        # JAVÍTÁS: A callback 'chart_type_pnl' -> ['chart', 'type', 'pnl']. A helyes index a 2.
         context.user_data['chart_type'] = query.data.split('_')[2]
         
         chart_type = context.user_data['chart_type']
@@ -382,6 +381,43 @@ class TelegramBotManager:
             colors = ['#2ca02c' if v >= 0 else '#d62728' for v in values]
             bars = ax.bar(labels, values, color=colors)
             
+            # --- MÓDOSÍTÁS KEZDETE ---
+            # Oszlopok feliratozása az értékükkel
+            for bar in bars:
+                yval = bar.get_height()
+                
+                # A 0 értékű oszlopokat nem címkézzük fel, mert zavaró lehet
+                if yval == 0:
+                    continue
+
+                # A szöveg pozíciójának beállítása:
+                # Pozitív oszlop esetén a címke az oszlop BELSEJÉBEN, a tetejéhez közelítve kerül.
+                # Negatív oszlop esetén a címke az oszlop BELSEJÉBEN, az aljához közelítve kerül.
+                vertical_alignment = 'top' if yval > 0 else 'bottom'
+                
+                # Egy kis belső margót (offset) adunk a szövegnek, hogy ne érjen hozzá az oszlop széléhez.
+                # Az offset mértékét a grafikon teljes magassághoz viszonyítjuk, hogy arányos maradjon.
+                y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
+                offset = y_range * 0.015 # 1.5% of the total height as padding
+
+                # Az eltolás iránya attól függ, hogy az oszlop pozitív vagy negatív
+                y_position = yval - offset if yval > 0 else yval + offset
+                
+                # A kiírt szöveg formázása: kerekítjük egész számra
+                label_text = f"{int(round(yval, 0))}"
+                
+                ax.text(
+                    x=bar.get_x() + bar.get_width() / 2.0, # X pozíció: az oszlop közepére
+                    y=y_position,                          # Y pozíció: a kiszámolt, eltolt pozíció
+                    s=label_text,                          # Szöveg: a formázott PnL érték
+                    ha='center',                           # Vízszintes igazítás: középre
+                    va=vertical_alignment,                 # Függőleges igazítás: a fentebb meghatározott
+                    color='white',                         # Szöveg színe
+                    fontsize=9,                            # Betűméret
+                    fontweight='bold'                      # Betűvastagság
+                )
+            # --- MÓDOSÍTÁS VÉGE ---
+
             ax.set_title(f'Napi Realizált PnL - {account_display_name} ({title_period})', fontsize=16, color='white', pad=20)
             ax.set_ylabel('PnL (USDT)', color='white')
             ax.grid(True, axis='y', linestyle='--', linewidth=0.4, color='gray')
@@ -462,3 +498,4 @@ def run_bot_process(token: str, config: dict, data_dir: Path):
         logger.warning(f"A Telegram bot nem indul el: {e}")
     except Exception as e:
         logger.critical(f"A Telegram bot processz hiba miatt leállt: {e}", exc_info=True)
+}
