@@ -8,7 +8,7 @@ from pathlib import Path
 
 class CustomColorFormatter(logging.Formatter):
     """
-    Egyedi log formatter, amely színezi a kimenetet a log szintje,
+    Egyedi log formatter, amely a teljes sort színezi a kimeneten a log szintje,
     és bizonyos üzenetek tartalma alapján a konzolon.
     """
     # ANSI escape kódok a színekhez
@@ -16,27 +16,27 @@ class CustomColorFormatter(logging.Formatter):
     YELLOW = "\x1b[33;20m"
     RED = "\x1b[31;20m"
     BOLD_RED = "\x1b[31;1m"
-    BLUE = "\x1b[34;20m" # Kék szín hozzáadva
+    LIGHT_BLUE = "\x1b[94m" # Világoskék szín hozzáadva
     RESET = "\x1b[0m"
 
     # Az alap formátum, ami mindenhol használva lesz
-    BASE_FORMAT = "%(asctime)s - %(process)d - %(levelname)s - [%(funcName)s] - "
+    BASE_FORMAT = "%(asctime)s - %(process)d - %(levelname)s - [%(funcName)s] - %(message)s"
 
     def __init__(self):
         super().__init__()
+        # JAVÍTÁS: A formátumok mostantól a teljes sort színezik
         self.FORMATS = {
-            logging.DEBUG: self.GREY + self.BASE_FORMAT + self.RESET + self.GREY + "%(message)s" + self.RESET,
-            logging.INFO: self.GREY + self.BASE_FORMAT + self.RESET + "%(message)s", # Alapértelmezett INFO
-            logging.WARNING: self.YELLOW + self.BASE_FORMAT + self.RESET + self.YELLOW + "%(message)s" + self.RESET,
-            logging.ERROR: self.RED + self.BASE_FORMAT + self.RESET + self.RED + "%(message)s" + self.RESET,
-            logging.CRITICAL: self.BOLD_RED + self.BASE_FORMAT + self.RESET + self.BOLD_RED + "%(message)s" + self.RESET,
+            logging.DEBUG: self.GREY + self.BASE_FORMAT + self.RESET,
+            logging.INFO: self.GREY + self.BASE_FORMAT + self.RESET,
+            logging.WARNING: self.YELLOW + self.BASE_FORMAT + self.RESET,
+            logging.ERROR: self.RED + self.BASE_FORMAT + self.RESET,
+            logging.CRITICAL: self.BOLD_RED + self.BASE_FORMAT + self.RESET,
         }
 
     def format(self, record):
         # Speciális eset a ciklus vége üzenetnek
         if "--- Ciklus vége" in record.getMessage():
-            # JAVÍTÁS: Pirosról kékre cserélve
-            log_fmt = self.GREY + self.BASE_FORMAT + self.RESET + self.BLUE + "%(message)s" + self.RESET
+            log_fmt = self.LIGHT_BLUE + self.BASE_FORMAT + self.RESET
         else:
             log_fmt = self.FORMATS.get(record.levelno, self.FORMATS[logging.INFO])
         
