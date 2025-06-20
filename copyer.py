@@ -20,12 +20,31 @@ from modules.api_handler import get_data
 from modules.telegram_sender import send_telegram_message
 from modules.sync_checker import check_positions_sync
 from modules.telegram_formatter import format_cycle_summary
+import os
+import sys
 
 __version__ = "15.1.0 (Robusztus Várakozás és Leállítás)"
 
 logger = logging.getLogger()
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
+
+def enable_windows_ansi():
+    """
+    Bekapcsolja az ANSI escape kódok támogatását a Windows terminálokban a színes loghoz.
+    Más operációs rendszereken nincs hatása.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            # A 7-es érték (ENABLE_VIRTUAL_TERMINAL_PROCESSING) engedélyezi az ANSI kódokat.
+            if kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7):
+                # print("[DEBUG] ANSI escape codes enabled for Windows console.")
+                pass
+        except (ImportError, AttributeError, OSError):
+            # Régi rendszerekre vagy hiba esetére egy alternatív, kevésbé megbízható megoldás.
+            os.system('')
 
 def process_aggregated_orders(orders, config, state_manager, reporting_manager, cycle_events):
     """Végrehajtja az aggregált megbízásokat."""
@@ -63,8 +82,6 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
         qty_str = f"{qty:.{config['settings']['qty_precision']}f}"
 
         if action == "OPEN":
-            # JAVÍTÁS: A 'is_increase' állapot felülbírálása, ha újraindítás történik.
-            # Ez biztosítja, hogy a Telegram üzenet helyesen "nyitás"-t mutasson.
             is_increase = order.get('is_increase', False)
             if symbol in close_reopen_pairs:
                 logger.info(f"'{symbol}' újraindításként azonosítva. A 'növelés' felülbírálva 'nyitás'-ra az eseményriportban.")
@@ -85,7 +102,6 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
             if place_order_on_demo(config, params):
                 state_manager.map_position(symbol, side)
                 reporting_manager.update_activity_log("copy")
-                # A (potenciálisan javított) 'is_increase' állapotot adjuk tovább
                 cycle_events.append({'type': 'open', 'data': {'symbol': symbol, 'side': side, 'qty': qty_str, 'is_increase': is_increase}})
 
         elif action == "CLOSE":
@@ -161,6 +177,9 @@ def perform_interactive_setup(config_data):
         print("\nA program a meglévő adatokkal folytatja.\n")
 
 def main():
+    # A színes konzol kimenet engedélyezése Windows-on
+    enable_windows_ansi()
+
     config_data = load_configuration()
     if not config_data:
         exit(1)
