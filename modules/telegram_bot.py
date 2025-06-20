@@ -345,6 +345,7 @@ class TelegramBotManager:
     def _generate_daily_pnl_barchart(self, pnl_data, account_display_name, period):
         """Legenerálja a napokra bontott PNL oszlopdiagramot."""
         import matplotlib.pyplot as plt
+        import matplotlib.patheffects
         
         try:
             raw_history = pnl_data.get(account_display_name, {}).get('raw_history', [])
@@ -381,25 +382,38 @@ class TelegramBotManager:
             bars = ax.bar(labels, values, color=colors)
             
             # --- MÓDOSÍTÁS KEZDETE ---
+            # Dinamikus betűméret beállítása az oszlopok száma alapján
+            num_bars = len(labels)
+            if num_bars <= 4:
+                dynamic_fontsize = 28
+            elif num_bars <= 7:
+                dynamic_fontsize = 20
+            elif num_bars <= 12:
+                dynamic_fontsize = 14
+            else:
+                dynamic_fontsize = 10
+
             # Oszlopok feliratozása az értékükkel
             for bar in bars:
                 yval = bar.get_height()
 
                 if yval == 0:
                     continue
-
-                # A kiírt szöveg formázása: dollárjel és egész számra kerekítés
+                
                 label_text = f"${int(round(yval, 0))}"
 
                 ax.text(
-                    x=bar.get_x() + bar.get_width() / 2.0,  # X pozíció (vízszintesen középen)
-                    y=yval / 2,                             # Y pozíció (függőlegesen középen)
-                    s=label_text,                           # A kiírandó szöveg
-                    ha='center',                            # Vízszintes igazítás (középre)
-                    va='center',                            # Függőleges igazítás (középre)
-                    color='white',                          # Szöveg színe
-                    fontsize=14,                            # Nagyobb betűméret
-                    fontweight='bold'                       # Félkövér
+                    x=bar.get_x() + bar.get_width() / 2.0,
+                    y=yval / 2,
+                    s=label_text,
+                    ha='center',
+                    va='center',
+                    color='white',
+                    fontsize=dynamic_fontsize,
+                    fontweight='bold',
+                    path_effects=[
+                        matplotlib.patheffects.withStroke(linewidth=2, foreground='black')
+                    ]
                 )
             # --- MÓDOSÍTÁS VÉGE ---
 
