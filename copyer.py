@@ -160,7 +160,7 @@ def perform_interactive_setup(config_data):
             server_time_data = response.json()
             if server_time_data.get('retCode') == 0 and 'timeNano' in server_time_data.get('result', {}):
                 server_time_ms = int(server_time_data['result']['timeNano']) // 1_000_000
-                new_start_datetime = datetime.fromtimestamp(server_time_ms / 1000, tz=timezone.utc)
+                new_start_datetime = datetime.fromtimestamp(server_time_ms+60000 / 1000, tz=timezone.utc)
                 new_start_date_str = new_start_datetime.strftime('%Y-%m-%d %H:%M:%S')
                 print(f"Szerveridő sikeresen lekérve. Új DemoStartDate: {new_start_date_str}")
             else:
