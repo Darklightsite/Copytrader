@@ -1,0 +1,20 @@
+2025-06-22 16:11:57,442 - 13484 - INFO - [setup_logging] - Naplózás beállítva a(z) 'Process-1' processz számára. Szint: DEBUG. Fájl: C:\Users\milan\Desktop\Copytrader\data\logs\telegram_bot_process.txt
+2025-06-22 16:11:59,569 - 13484 - INFO - [run] - Telegram bot processz indul...
+2025-06-22 16:11:59,569 - 13484 - DEBUG - [__init__] - Using proactor: IocpProactor
+2025-06-22 16:16:09,462 - 14512 - INFO - [setup_logging] - Naplózás beállítva a(z) 'Process-1' processz számára. Szint: DEBUG. Fájl: C:\Users\milan\Desktop\Copytrader\data\logs\telegram_bot_process.txt
+2025-06-22 16:16:11,498 - 14512 - INFO - [run] - Telegram bot processz indul...
+2025-06-22 16:16:11,499 - 14512 - DEBUG - [__init__] - Using proactor: IocpProactor
+2025-06-22 16:36:46,164 - 14512 - INFO - [pnl_command] - /pnl parancs fogadva.
+2025-06-22 16:41:29,753 - 10608 - INFO - [setup_logging] - Naplózás beállítva a(z) 'Process-1' processz számára. Szint: DEBUG. Fájl: C:\Users\milan\Desktop\Copytrader\data\logs\telegram_bot_process.txt
+2025-06-22 16:41:31,831 - 10608 - INFO - [run] - Telegram bot processz indul...
+2025-06-22 16:41:31,832 - 10608 - DEBUG - [__init__] - Using proactor: IocpProactor
+2025-06-22 16:53:28,735 - 10608 - INFO - [pnl_command] - /pnl parancs fogadva.
+2025-06-22 17:14:56,068 - 10608 - INFO - [status_command] - /status parancs fogadva.
+2025-06-22 18:50:27,811 - 10608 - INFO - [pnl_command] - /pnl parancs fogadva.
+2025-06-22 18:52:58,855 - 3948 - INFO - [setup_logging] - Naplózás beállítva a(z) 'Process-1' processz számára. Szint: DEBUG. Fájl: C:\Users\milan\Desktop\Copytrader\data\logs\telegram_bot_process.txt
+2025-06-22 18:53:01,083 - 3948 - INFO - [run] - Telegram bot processz indul...
+2025-06-22 18:53:01,083 - 3948 - DEBUG - [__init__] - Using proactor: IocpProactor
+2025-06-22 18:55:59,890 - 5672 - INFO - [setup_logging] - Naplózás beállítva a(z) 'Process-1' processz számára. Szint: DEBUG. Fájl: C:\Users\milan\Desktop\Copytrader\data\logs\telegram_bot_process.txt
+2025-06-22 18:56:02,084 - 5672 - INFO - [run] - Telegram bot processz indul...
+2025-06-22 18:56:02,084 - 5672 - DEBUG - [__init__] - Using proactor: IocpProactor
+2025-06-22 19:30:40,984 - 5672 - INFO - [pnl_command] - /pnl parancs fogadva.
