@@ -200,6 +200,7 @@ def main():
         
         if config_data.get('telegram', {}).get('bot_token'):
             from modules.telegram_bot import run_bot_process
+            multiprocessing.set_executable(sys.executable)
             bot_process = multiprocessing.Process(
                 target=run_bot_process, 
                 args=(config_data['telegram']['bot_token'], config_data, DATA_DIR), 
