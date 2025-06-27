@@ -1,0 +1,5 @@
+2025-06-25 20:03:52,997 - 9596 - INFO - [setup_logging] - Naplózás beállítva a(z) 'Process-1' processz számára. Szint: DEBUG. Fájl: C:\Users\milan\Desktop\Copytrader\data\logs\telegram_bot_process.txt
+2025-06-25 20:03:54,491 - 9596 - DEBUG - [__init__] - Using proactor: IocpProactor
+2025-06-25 20:03:55,400 - 9596 - INFO - [run] - Telegram bot processz indul...
+2025-06-25 20:11:22,066 - 9596 - INFO - [status_command] - /status parancs fogadva.
+2025-06-25 20:11:26,932 - 9596 - INFO - [pnl_command] - /pnl parancs fogadva.
