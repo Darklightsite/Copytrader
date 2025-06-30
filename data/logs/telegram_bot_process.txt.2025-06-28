@@ -1,0 +1,16 @@
+2025-06-28 03:00:59,910 - 7696 - INFO - [status_command] - /status parancs fogadva.
+2025-06-28 03:01:10,602 - 7696 - INFO - [pnl_command] - /pnl parancs fogadva.
+2025-06-28 04:55:06,102 - 7696 - INFO - [status_command] - /status parancs fogadva.
+2025-06-28 04:55:18,432 - 7696 - INFO - [pnl_command] - /pnl parancs fogadva.
+2025-06-28 07:30:05,297 - 7696 - INFO - [status_command] - /status parancs fogadva.
+2025-06-28 07:30:39,403 - 7696 - INFO - [pnl_command] - /pnl parancs fogadva.
+2025-06-28 08:17:41,367 - 7696 - INFO - [status_command] - /status parancs fogadva.
+2025-06-28 09:22:29,568 - 9160 - INFO - [setup_logging] - Naplózás beállítva a(z) 'Process-1' processz számára. Szint: DEBUG. Fájl: C:\Users\milan\Desktop\Copytrader\data\logs\telegram_bot_process.txt
+2025-06-28 09:22:32,751 - 9160 - DEBUG - [__init__] - Using proactor: IocpProactor
+2025-06-28 09:22:33,680 - 9160 - INFO - [run] - Telegram bot processz indul...
+2025-06-28 09:25:24,016 - 9160 - INFO - [pnl_command] - /pnl parancs fogadva.
+2025-06-28 09:25:28,382 - 9160 - INFO - [status_command] - /status parancs fogadva.
+2025-06-28 11:04:12,856 - 9160 - INFO - [status_command] - /status parancs fogadva.
+2025-06-28 13:43:59,178 - 9160 - INFO - [pnl_command] - /pnl parancs fogadva.
+2025-06-28 13:44:03,305 - 9160 - INFO - [status_command] - /status parancs fogadva.
+2025-06-28 16:42:01,726 - 9160 - INFO - [status_command] - /status parancs fogadva.

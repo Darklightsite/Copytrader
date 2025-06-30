@@ -1,8 +1,0 @@
-2025-06-23 03:00:55,643 - 5672 - INFO - [pnl_command] - /pnl parancs fogadva.
-2025-06-23 03:01:08,960 - 5672 - INFO - [status_command] - /status parancs fogadva.
-2025-06-23 03:11:35,564 - 6632 - INFO - [setup_logging] - Naplózás beállítva a(z) 'Process-1' processz számára. Szint: DEBUG. Fájl: C:\Users\milan\Desktop\Copytrader\data\logs\telegram_bot_process.txt
-2025-06-23 03:11:39,254 - 6632 - INFO - [run] - Telegram bot processz indul...
-2025-06-23 03:11:39,254 - 6632 - DEBUG - [__init__] - Using proactor: IocpProactor
-2025-06-23 03:12:59,748 - 6632 - INFO - [pnl_command] - /pnl parancs fogadva.
-2025-06-23 03:13:03,541 - 6632 - INFO - [status_command] - /status parancs fogadva.
-2025-06-23 03:22:34,818 - 6632 - INFO - [pnl_command] - /pnl parancs fogadva.
