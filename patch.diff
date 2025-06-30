@@ -1,0 +1,70 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/copyer.py b/copyer.py
+index 5cf283e19a010d315713e3f618360b77091bb641..4f90c3734a507c63ee54d913ea335c8821676709 100644
+--- a/copyer.py
++++ b/copyer.py
+@@ -82,50 +82,61 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager,
+         qty_str = f"{qty:.{config['settings']['qty_precision']}f}"
+ 
+         if action == "OPEN":
+             is_increase = order.get('is_increase', False)
+             if symbol in close_reopen_pairs:
+                 logger.info(f"'{symbol}' újraindításként azonosítva. A 'növelés' felülbírálva 'nyitás'-ra az eseményriportban.")
+                 is_increase = False
+             
+             if not is_increase:
+                 live_pos_resp = get_data(config['live_api'], "/v5/position/list", {'category': 'linear', 'symbol': symbol})
+                 if live_pos_resp and live_pos_resp.get('list'):
+                     live_pos = live_pos_resp['list'][0]
+                     leverage = live_pos.get('leverage', '10')
+                     set_leverage_on_demo(config, symbol, leverage)
+                     time.sleep(0.5)
+ 
+             pos_idx = _determine_position_idx(config, side)
+             params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': False, 'orderType': 'Market', 'positionIdx': pos_idx}
+             
+             logger.info(f"OPEN parancs előkészítve. Paraméterek: {params}")
+             if place_order_on_demo(config, params):
+                 state_manager.map_position(symbol, side)
+                 reporting_manager.update_activity_log("copy")
+                 cycle_events.append({'type': 'open', 'data': {'symbol': symbol, 'side': side, 'qty': qty_str, 'is_increase': is_increase}})
+ 
++                # --- ÚJ FUNKCIÓ: SL frissítése azonnal a pozíciónyitás után ---
++                time.sleep(1)
++                demo_pos_resp = get_data(config['demo_api'], "/v5/position/list", {'category': 'linear', 'symbol': symbol})
++                if demo_pos_resp and demo_pos_resp.get('list'):
++                    for pos in demo_pos_resp['list']:
++                        if pos.get('side') == side and float(pos.get('size', '0')) > 0:
++                            sl_event = check_and_set_sl(pos, config)
++                            if sl_event:
++                                cycle_events.append({'type': 'sl', 'data': sl_event})
++                            break
++
+         elif action == "CLOSE":
+             position_side = order['position_side_for_close']
+             pos_idx = _determine_position_idx(config, position_side)
+             params = {'category': 'linear', 'symbol': symbol, 'side': side, 'qty': qty_str, 'reduceOnly': True, 'orderType': 'Market', 'positionIdx': pos_idx}
+             
+             logger.info(f"CLOSE parancs előkészítve. Paraméterek: {params}")
+             if place_order_on_demo(config, params):
+                 state_manager.remove_mapping(symbol, position_side)
+                 closed_pnl, daily_pnl = reporting_manager.get_pnl_update_after_close(config['demo_api'], symbol)
+                 cycle_events.append({'type': 'close', 'data': {'symbol': symbol, 'side': position_side, 'qty': qty_str, 'pnl': closed_pnl, 'daily_pnl': daily_pnl}})
+ 
+         time.sleep(0.5)
+ 
+ def update_config_value(section, option, value):
+     try:
+         config = configparser.ConfigParser()
+         config.read('config.ini')
+         if not config.has_section(section):
+             config.add_section(section)
+         config.set(section, option, str(value))
+         with open('config.ini', 'w') as configfile:
+             config.write(configfile)
+         print(f"A config.ini sikeresen frissítve: {section}.{option} = {value}")
+     except Exception as e:
+         print(f"Hiba a config.ini frissítésekor: {e}")
+ 
+EOF
+)

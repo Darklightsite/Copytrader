@@ -104,6 +104,17 @@ def process_aggregated_orders(orders, config, state_manager, reporting_manager, 
                 reporting_manager.update_activity_log("copy")
                 cycle_events.append({'type': 'open', 'data': {'symbol': symbol, 'side': side, 'qty': qty_str, 'is_increase': is_increase}})
 
+                # --- ÚJ FUNKCIÓ: SL frissítése azonnal a pozíciónyitás után ---
+                time.sleep(1)
+                demo_pos_resp = get_data(config['demo_api'], "/v5/position/list", {'category': 'linear', 'symbol': symbol})
+                if demo_pos_resp and demo_pos_resp.get('list'):
+                    for pos in demo_pos_resp['list']:
+                        if pos.get('side') == side and float(pos.get('size', '0')) > 0:
+                            sl_event = check_and_set_sl(pos, config)
+                            if sl_event:
+                                cycle_events.append({'type': 'sl', 'data': sl_event})
+                            break
+
         elif action == "CLOSE":
             position_side = order['position_side_for_close']
             pos_idx = _determine_position_idx(config, position_side)
