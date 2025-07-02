@@ -112,3 +112,15 @@ def get_all_users(users_json_path='data/users.json'):
             os.makedirs(os.path.join(user_dir, 'logs'), exist_ok=True)
             os.makedirs(os.path.join(user_dir, 'snapshots'), exist_ok=True)
     return users
+
+def is_admin(user):
+    """True, ha a felhasználó admin szerepkörű."""
+    return user.get('role') == 'admin'
+
+def is_master(user):
+    """True, ha a felhasználó master szerepkörű."""
+    return user.get('account_type') == 'master'
+
+def is_user(user):
+    """True, ha a felhasználó normál user (kereskedő)."""
+    return user.get('account_type') == 'user'
