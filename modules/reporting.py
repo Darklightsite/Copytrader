@@ -35,7 +35,7 @@ class ReportingManager:
             with open(file_path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4, ensure_ascii=False)
         except IOError as e:
             logger.error(f"Hiba a(z) {file_path} írása közben: {e}")
-            send_admin_alert(f"Hiba a(z) {file_path} írása közben: {e}")
+            send_admin_alert(f"Hiba a(z) {file_path} írása közben: {e}", user=self.config.get('nickname') if hasattr(self, 'config') and self.config else None, account=self.version)
 
     def _update_chart_data(self, account_data):
         """Hozzáadja az aktuális egyenleg adatpontot a megfelelő chart fájlhoz."""
@@ -64,7 +64,7 @@ class ReportingManager:
 
         except Exception as e:
             logger.error(f"Hiba a chart adatok frissítése közben ({file_path.name}): {e}", exc_info=True)
-            send_admin_alert(f"Hiba a chart adatok frissítése közben ({file_path.name}): {e}")
+            send_admin_alert(f"Hiba a chart adatok frissítése közben ({file_path.name}): {e}", user=self.config.get('nickname') if hasattr(self, 'config') and self.config else None, account=account_name)
 
     def update_activity_log(self, activity_type="copy"):
         """Frissíti az aktivitási naplót (utolsó másolás, indulás ideje)."""

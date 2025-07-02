@@ -27,7 +27,7 @@ class StateManager:
             logger.info("Állapot sikeresen betöltve a fájlból.")
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Hiba az állapotfájl betöltésekor: {e}.")
-            send_admin_alert(f"Hiba az állapotfájl betöltésekor: {e}.")
+            send_admin_alert(f"Hiba az állapotfájl betöltésekor: {e}.", user=str(self.file_path.parent.name), account=str(self.file_path.name))
             # Hiba esetén visszaállunk egy üres állapotra a biztonság kedvéért
             self.state = {"last_processed_exec_id": None, "position_map": {}} # 
     
@@ -44,7 +44,7 @@ class StateManager:
                 json.dump(self.state, f, indent=4)
         except IOError as e:
             logger.critical(f"KRITIKUS HIBA: Az állapotfájl mentése sikertelen! {e}") # 
-            send_admin_alert(f"KRITIKUS HIBA: Az állapotfájl mentése sikertelen! {e}")
+            send_admin_alert(f"KRITIKUS HIBA: Az állapotfájl mentése sikertelen! {e}", user=str(self.file_path.parent.name), account=str(self.file_path.name))
 
     def get_last_id(self):
         """Visszaadja az utoljára feldolgozott esemény ID-jét."""

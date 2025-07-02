@@ -12,7 +12,7 @@ def run_for_user(nickname):
     config = load_configuration(nickname)
     if not config:
         print(f"[HIBA] Nem sikerült betölteni a konfigurációt: {nickname}")
-        send_admin_alert(f"Nem sikerült betölteni a konfigurációt: {nickname}")
+        send_admin_alert(f"Nem sikerült betölteni a konfigurációt: {nickname}", user=nickname)
         return
     log_dir = DATA_DIR / "users" / nickname / "logs"
     setup_logging(config, log_dir=log_dir)
@@ -29,17 +29,17 @@ def run_for_user(nickname):
             # User account logika (pl. kereskedés, szinkron, stb.)
         else:
             logger.warning("Ismeretlen account típus!")
-            send_admin_alert(f"Ismeretlen account típus: {nickname}")
+            send_admin_alert(f"Ismeretlen account típus: {nickname}", user=nickname, account=config['settings'].get('account_type'))
     except Exception as e:
         logger.error(f"Váratlan hiba a fiók indításakor: {e}", exc_info=True)
-        send_admin_alert(f"❌ Váratlan hiba a fiók indításakor ({nickname}): {e}")
+        send_admin_alert(f"❌ Váratlan hiba a fiók indításakor ({nickname}): {e}", user=nickname, account=config['settings'].get('account_type'))
 
 
 def main():
     users = get_all_users()
     if not users:
         print("[HIBA] Nincs egyetlen felhasználó sem a users.json-ban!")
-        send_admin_alert("Nincs egyetlen felhasználó sem a users.json-ban!")
+        send_admin_alert("Nincs egyetlen felhasználó sem a users.json-ban!", user=None, account=None)
         return
     processes = []
     for user in users:

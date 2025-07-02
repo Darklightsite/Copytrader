@@ -30,7 +30,7 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
 
     if live_positions_resp is None or demo_positions_resp is None:
         logger.error("Kezdeti szinkron sikertelen: pozíciók lekérése sikertelen.")
-        send_admin_alert("Kezdeti szinkron sikertelen: pozíciók lekérése sikertelen.")
+        send_admin_alert("Kezdeti szinkron sikertelen: pozíciók lekérése sikertelen.", user=config_data.get('nickname'), account=config_data.get('settings', {}).get('account_type'))
         return False
 
     live_positions = {f"{p['symbol']}-{p['side']}": p for p in live_positions_resp.get('list', []) if float(p.get('size', '0')) > 0}
@@ -85,7 +85,7 @@ def perform_initial_sync(config_data, state_manager, reporting_manager, cycle_ev
             state_manager.set_last_id(recent_executions['list'][0]['execId'])
     except Exception as e:
         logger.error(f"Hiba a legfrissebb esemény ID lekérdezése közben: {e}", exc_info=True)
-        send_admin_alert(f"Hiba a legfrissebb esemény ID lekérdezése közben: {e}")
+        send_admin_alert(f"Hiba a legfrissebb esemény ID lekérdezése közben: {e}", user=config_data.get('nickname'), account=config_data.get('settings', {}).get('account_type'))
         state_manager.set_last_id("initial_sync_error")
 
     logger.info("KEZDETI SZINKRONIZÁCIÓ BEFEJEZVE!")
@@ -100,7 +100,7 @@ def main_event_loop(config_data, state_manager, order_aggregator):
     last_known_id = state_manager.get_last_id()
     if not last_known_id:
         logger.warning("Nincs utolsó esemény ID, a ciklus kihagyva. Kezdeti szinkronra lehet szükség.")
-        send_admin_alert("Nincs utolsó esemény ID, a ciklus kihagyva. Kezdeti szinkronra lehet szükség.")
+        send_admin_alert("Nincs utolsó esemény ID, a ciklus kihagyva. Kezdeti szinkronra lehet szükség.", user=config_data.get('nickname'), account=config_data.get('settings', {}).get('account_type'))
         return False, None
 
     multiplier = Decimal(str(config_data['settings'].get('copy_multiplier', 1.0)))
