@@ -4,6 +4,7 @@ import configparser
 import logging
 import os
 import json
+from modules.logger_setup import send_admin_alert
 
 logger = logging.getLogger()
 
@@ -20,6 +21,7 @@ def load_configuration(nickname, path=None):
 
     if not os.path.exists(config_path):
         logger.critical(f"A konfigurációs fájl NEM LÉTEZIK a megadott helyen: {config_path}")
+        send_admin_alert(f"A konfigurációs fájl NEM LÉTEZIK: {config_path}", user=nickname)
         return None
 
     parser = configparser.ConfigParser()
@@ -27,17 +29,21 @@ def load_configuration(nickname, path=None):
         read_files = parser.read(config_path, encoding='utf-8')
         if not read_files:
             logger.critical(f"A konfigurációs fájl ({config_path}) üres vagy nem sikerült beolvasni.")
+            send_admin_alert(f"A konfigurációs fájl üres vagy nem sikerült beolvasni: {config_path}", user=nickname)
             return None
     except Exception as e:
         logger.critical(f"Hiba a konfigurációs fájl olvasása közben: {e}", exc_info=True)
+        send_admin_alert(f"Hiba a konfigurációs fájl olvasása közben: {e}", user=nickname)
         return None
 
     if not parser.has_section('settings'):
         logger.critical(f"A beolvasott konfigurációs fájlból HIÁNYZIK a [settings] szekció!")
+        send_admin_alert(f"A konfigurációs fájlból hiányzik a [settings] szekció: {config_path}", user=nickname)
         return None
     
     if not parser.has_option('settings', 'copy_multiplier'):
          logger.warning(f"A [settings] szekcióból hiányzik a 'copy_multiplier' opció. Az alapértelmezett 10.0 lesz használva.")
+         send_admin_alert(f"A [settings] szekcióból hiányzik a 'copy_multiplier' opció. Alapértelmezett érték: 10.0", user=nickname)
 
     config = {}
     try:
@@ -83,6 +89,7 @@ def load_configuration(nickname, path=None):
         
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError) as e:
         logger.critical(f"Konfigurációs hiba a(z) {config_path} fájlban. Hiba: {e}", exc_info=True)
+        send_admin_alert(f"Konfigurációs hiba a(z) {config_path} fájlban. Hiba: {e}", user=nickname)
         return None
 
     logger.info("Konfiguráció sikeresen betöltve.")
@@ -100,6 +107,7 @@ def get_all_users(users_json_path='data/users.json'):
             users = data.get('users', [])
     except Exception as e:
         logger.critical(f"Nem sikerült beolvasni a users.json-t: {e}")
+        send_admin_alert(f"Nem sikerült beolvasni a users.json-t: {e}", user=None)
         return []
 
     # Mappák automatikus létrehozása
