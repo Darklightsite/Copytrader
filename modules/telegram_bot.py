@@ -8,15 +8,17 @@ import warnings
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
+from modules.auth import restricted
+from typing import Any
 
 # A Telegram és Matplotlib könyvtárak importját áthelyeztük a run_bot_process függvénybe
 TELEGRAM_LIBS_AVAILABLE = False
 MATPLOTLIB_AVAILABLE = False
-class Update: pass
-class ContextTypes:
-    class DEFAULT_TYPE: pass
-class ConversationHandler:
-    END = -1
+# Típusok a Telegram objektumokhoz (futásidőben valós objektumok, itt Any)
+Update = Any
+ContextTypes = Any
+# Csak az END konstans kell:
+END = -1
 
 logger = logging.getLogger()
 
@@ -86,7 +88,7 @@ class TelegramBotManager:
                 return json.load(f)
         except (json.JSONDecodeError, IOError): return default_data
     
-    async def _delete_command_message(self, update: Update):
+    async def _delete_command_message(self, update):
         if not update.message: return
         try:
             await update.message.delete()
@@ -96,7 +98,8 @@ class TelegramBotManager:
         except Exception as e:
             logger.error(f"Hiba a parancsüzenet törlésekor: {e}", exc_info=True)
 
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    @restricted
+    async def start_command(self, update, context):
         help_text = ("👋 *Szia! Elérhető parancsok:*\n\n"
                      "`/status` - Részletes állapotjelentés\n"
                      "`/pnl` - Összesített PnL riport\n"
@@ -104,7 +107,8 @@ class TelegramBotManager:
         await update.message.reply_markdown(help_text)
         await self._delete_command_message(update)
 
-    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    @restricted
+    async def status_command(self, update, context):
         logger.info("/status parancs fogadva.")
         try:
             status = self._load_json_file(self.data_dir / "status.json")
@@ -154,7 +158,8 @@ class TelegramBotManager:
             logger.error(f"Hiba a /status parancs feldolgozása közben: {e}", exc_info=True)
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Hiba a /status parancs végrehajtása során.")
 
-    async def pnl_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    @restricted
+    async def pnl_command(self, update, context):
         logger.info("/pnl parancs fogadva.")
         pnl_data = self._load_json_file(self.data_dir / "pnl_report.json")
         await self._delete_command_message(update)
@@ -181,7 +186,8 @@ class TelegramBotManager:
     
     # --- GRAFIKON FUNKCIÓK ---
 
-    async def chart_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    @restricted
+    async def chart_start(self, update, context):
         """A /chart beszélgetés indítása vagy újraindítása (Fiókválasztás)."""
         await self._delete_command_message(update)
         
@@ -189,7 +195,7 @@ class TelegramBotManager:
             message_text = "Grafikon funkció nem elérhető: 'matplotlib' csomag hiányzik."
             if update.callback_query: await update.callback_query.edit_message_text(message_text)
             else: await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text)
-            return self.ConversationHandler.END
+            return END
 
         context.user_data.clear()
         keyboard = [
@@ -206,7 +212,8 @@ class TelegramBotManager:
         
         return self.SELECT_ACCOUNT
 
-    async def select_account(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    @restricted
+    async def select_account(self, update, context):
         """Fiók kiválasztása után a diagramtípus bekérése."""
         query = update.callback_query
         await query.answer()
@@ -223,7 +230,8 @@ class TelegramBotManager:
         await query.edit_message_text("Milyen típusú diagramot szeretnél?", reply_markup=self.InlineKeyboardMarkup(keyboard))
         return self.SELECT_CHART_TYPE
 
-    async def select_chart_type(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    @restricted
+    async def select_chart_type(self, update, context):
         """Diagramtípus kiválasztása után a periódus bekérése."""
         query = update.callback_query
         await query.answer()
@@ -244,7 +252,7 @@ class TelegramBotManager:
             ]
         else:
             await query.edit_message_text("Hiba: Ismeretlen diagramtípus került kiválasztásra.")
-            return self.ConversationHandler.END
+            return END
 
         keyboard.append([self.InlineKeyboardButton("« Vissza (Típus)", callback_data='back_to_chart_type')])
         keyboard.append([self.InlineKeyboardButton("Mégse", callback_data='cancel')])
@@ -252,7 +260,8 @@ class TelegramBotManager:
         await query.edit_message_text("Válassz időszakot:", reply_markup=self.InlineKeyboardMarkup(keyboard))
         return self.SELECT_PERIOD
 
-    async def select_period_and_generate(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    @restricted
+    async def select_period_and_generate(self, update, context):
         """Periódus kiválasztása után a megfelelő grafikon generálása és küldése."""
         query = update.callback_query
         await query.answer()
@@ -288,7 +297,7 @@ class TelegramBotManager:
             await context.bot.send_message(chat_id=query.message.chat_id, text="❌ Hiba történt a grafikon készítésekor.")
         finally:
             context.user_data.clear()
-        return self.ConversationHandler.END
+        return END
 
     def _generate_balance_chart(self, data, period, account_display_name):
         """Legenerálja az egyenleggörbe grafikont."""
@@ -438,19 +447,19 @@ class TelegramBotManager:
             logger.error(f"Hiba a napi PnL oszlopdiagram generálása közben: {e}", exc_info=True)
             return None, "Belső hiba történt a grafikon generálásakor."
 
-    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def cancel(self, update, context):
         """Megszakítja a beszélgetést."""
         query = update.callback_query
         await query.answer()
         await query.edit_message_text("Művelet megszakítva.")
         context.user_data.clear()
-        return self.ConversationHandler.END
+        return END
         
 def run_bot_process(token: str, config: dict, data_dir: Path):
     from .logger_setup import setup_logging
     setup_logging(config, log_dir=(data_dir / "logs"))
     
-    global TELEGRAM_LIBS_AVAILABLE, MATPLOTLIB_AVAILABLE, Update, ContextTypes, ConversationHandler
+    global TELEGRAM_LIBS_AVAILABLE, MATPLOTLIB_AVAILABLE, Update, ContextTypes, END
     
     try:
         from telegram import Update as TelegramUpdate, InlineKeyboardButton, InlineKeyboardMarkup
