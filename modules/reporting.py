@@ -98,16 +98,18 @@ class ReportingManager:
     def update_reports(self, pnl_update_needed=False):
         """Frissíti az összes riportot: státusz, PnL, napi statisztikák és chart adatok."""
         logger.info("Riportok frissítése...")
-        live_account_data = self._get_account_data(self.live_api, "Élő", pnl_update_needed)
-        demo_account_data = self._get_account_data(self.demo_api, "Demó", pnl_update_needed)
-        
-        self._update_chart_data(live_account_data)
-        self._update_chart_data(demo_account_data)
-        
-        self._update_daily_stats(demo_account_data)
-        self._update_status_report(live_account_data, demo_account_data)
-        if pnl_update_needed:
-            self._update_pnl_report(live_account_data, demo_account_data)
+        try:
+            live_account_data = self._get_account_data(self.live_api, "Élő", pnl_update_needed)
+            demo_account_data = self._get_account_data(self.demo_api, "Demó", pnl_update_needed)
+            self._update_chart_data(live_account_data)
+            self._update_chart_data(demo_account_data)
+            self._update_daily_stats(demo_account_data)
+            self._update_status_report(live_account_data, demo_account_data)
+            if pnl_update_needed:
+                self._update_pnl_report(live_account_data, demo_account_data)
+        except Exception as e:
+            logger.error(f"Riport frissítési hiba: {e}", exc_info=True)
+            send_admin_alert(f"Riport frissítési hiba: {e}", user=self.config.get('nickname') if hasattr(self, 'config') and self.config else None)
 
     def _fetch_history_in_chunks(self, api, endpoint, **extra_params):
         """Stabil, 7 napos blokkokban történő lekérdezési logika."""
