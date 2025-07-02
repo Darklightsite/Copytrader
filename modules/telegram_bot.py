@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from modules.auth import restricted
 from typing import Any
+from modules.logger_setup import send_admin_alert
 
 # A Telegram és Matplotlib könyvtárak importját áthelyeztük a run_bot_process függvénybe
 TELEGRAM_LIBS_AVAILABLE = False
@@ -120,6 +121,7 @@ class TelegramBotManager:
 
             if not status:
                 await context.bot.send_message(chat_id=update.effective_chat.id, text="Hiba: `status.json` nem található.", parse_mode='Markdown')
+                send_admin_alert("Hiba: status.json nem található a /status parancs futásakor.")
                 return
             
             live_daily_pnl = pnl_report.get("Élő", {}).get("summary", {}).get("periods", {}).get("Mai", {}).get("pnl", 0.0)
@@ -156,33 +158,40 @@ class TelegramBotManager:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=reply, parse_mode='Markdown', disable_notification=True)
         except Exception as e:
             logger.error(f"Hiba a /status parancs feldolgozása közben: {e}", exc_info=True)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="Hiba a /status parancs végrehajtása során.")
+            send_admin_alert(f"❌ Hiba a /status parancs feldolgozása közben: {e}")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Hiba történt a státusz lekérdezésekor. Az adminisztrátor értesítve lett.")
 
     @restricted
     async def pnl_command(self, update, context):
         logger.info("/pnl parancs fogadva.")
-        pnl_data = self._load_json_file(self.data_dir / "pnl_report.json")
-        await self._delete_command_message(update)
-        
-        if not pnl_data:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="Nincsenek elérhető PnL adatok.")
-            return
+        try:
+            pnl_data = self._load_json_file(self.data_dir / "pnl_report.json")
+            await self._delete_command_message(update)
+            
+            if not pnl_data:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="Nincsenek elérhető PnL adatok.")
+                send_admin_alert("Nincsenek elérhető PnL adatok a /pnl parancs futásakor.")
+                return
 
-        message = "📊 *Realizált PnL Jelentés* 📊\n\n"
-        period_order = ["Mai", "Heti", "Havi", "Teljes"]
-        
-        for account in ["Élő", "Demó"]:
-            if account_data := pnl_data.get(account):
-                if summary_data := account_data.get('summary'):
-                    start_date_info = summary_data.get('start_date', 'N/A')
-                    message += f"⦿ *{account} Számla* (Kezdet: {start_date_info})\n"
-                    for period in period_order:
-                        if pnl_info := summary_data.get('periods', {}).get(period):
-                            pnl_value, trade_count = pnl_info.get('pnl', 0.0), pnl_info.get('trade_count', 0)
-                            pnl_emoji = "📈" if pnl_value > 0 else "📉" if pnl_value < 0 else "➖"
-                            message += f"  - `{period}`: {pnl_emoji} `${pnl_value:,.2f}` ({trade_count} trade)\n"
-                    message += "\n"
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=message, parse_mode='Markdown', disable_notification=True)
+            message = "�� *Realizált PnL Jelentés* 📊\n\n"
+            period_order = ["Mai", "Heti", "Havi", "Teljes"]
+            
+            for account in ["Élő", "Demó"]:
+                if account_data := pnl_data.get(account):
+                    if summary_data := account_data.get('summary'):
+                        start_date_info = summary_data.get('start_date', 'N/A')
+                        message += f"⦿ *{account} Számla* (Kezdet: {start_date_info})\n"
+                        for period in period_order:
+                            if pnl_info := summary_data.get('periods', {}).get(period):
+                                pnl_value, trade_count = pnl_info.get('pnl', 0.0), pnl_info.get('trade_count', 0)
+                                pnl_emoji = "📈" if pnl_value > 0 else "📉" if pnl_value < 0 else "➖"
+                                message += f"  - `{period}`: {pnl_emoji} `${pnl_value:,.2f}` ({trade_count} trade)\n"
+                        message += "\n"
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=message, parse_mode='Markdown', disable_notification=True)
+        except Exception as e:
+            logger.error(f"Hiba a /pnl parancs feldolgozása közben: {e}", exc_info=True)
+            send_admin_alert(f"❌ Hiba a /pnl parancs feldolgozása közben: {e}")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Hiba történt a PnL lekérdezésekor. Az adminisztrátor értesítve lett.")
     
     # --- GRAFIKON FUNKCIÓK ---
 
@@ -193,8 +202,8 @@ class TelegramBotManager:
         
         if not MATPLOTLIB_AVAILABLE:
             message_text = "Grafikon funkció nem elérhető: 'matplotlib' csomag hiányzik."
-            if update.callback_query: await update.callback_query.edit_message_text(message_text)
-            else: await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text)
+            send_admin_alert("Grafikon funkció nem elérhető: 'matplotlib' csomag hiányzik.")
             return END
 
         context.user_data.clear()
@@ -294,7 +303,8 @@ class TelegramBotManager:
                 await context.bot.send_message(chat_id=query.message.chat_id, text=caption_text)
         except Exception as e:
             logger.error(f"Hiba a grafikon generálásakor: {e}", exc_info=True)
-            await context.bot.send_message(chat_id=query.message.chat_id, text="❌ Hiba történt a grafikon készítésekor.")
+            send_admin_alert(f"❌ Hiba a grafikon generálásakor: {e}")
+            await context.bot.send_message(chat_id=query.message.chat_id, text="❌ Hiba történt a grafikon készítésekor. Az adminisztrátor értesítve lett.")
         finally:
             context.user_data.clear()
         return END
