@@ -6,17 +6,22 @@ import os
 
 logger = logging.getLogger()
 
-def load_configuration(path='config.ini'):
-    """Beolvassa és validálja a konfigurációt a megadott .ini fájlból, részletes naplózással."""
-    parser = configparser.ConfigParser()
-    
-    config_path = os.path.abspath(path)
+def load_configuration(nickname, path=None):
+    """
+    Beolvassa és validálja a konfigurációt a megadott felhasználóhoz (data/users/<nickname>/config.ini), részletes naplózással.
+    Ha path meg van adva, azt használja, különben a felhasználói mappát.
+    """
+    if path is None:
+        config_path = os.path.abspath(os.path.join('data', 'users', nickname, 'config.ini'))
+    else:
+        config_path = os.path.abspath(path)
     logger.info(f"Konfigurációs fájl beolvasásának megkezdése: {config_path}")
 
     if not os.path.exists(config_path):
         logger.critical(f"A konfigurációs fájl NEM LÉTEZIK a megadott helyen: {config_path}")
         return None
 
+    parser = configparser.ConfigParser()
     try:
         read_files = parser.read(config_path, encoding='utf-8')
         if not read_files:
@@ -36,20 +41,14 @@ def load_configuration(path='config.ini'):
     config = {}
     try:
         # API Szekció
-        config['live_api'] = {
-            'api_key': parser.get('api', 'api_key_live'),
-            'api_secret': parser.get('api', 'api_secret_live'),
-            'url': 'https://api.bybit.com',
-            'is_demo': False
-        }
-        config['demo_api'] = {
-            'api_key': parser.get('api', 'api_key_demo'),
-            'api_secret': parser.get('api', 'api_secret_demo'),
-            'url': 'https://api-demo.bybit.com',
-            'is_demo': True
+        config['api'] = {
+            'api_key': parser.get('api', 'api_key'),
+            'api_secret': parser.get('api', 'api_secret'),
+            'url': parser.get('api', 'url', fallback='https://api.bybit.com'),
+            'is_demo': parser.getboolean('api', 'is_demo', fallback=False)
         }
 
-        # Telegram Szekció
+        # Telegram Szekció (opcionális, lehet központi is)
         config['telegram'] = {
             'bot_token': parser.get('telegram', 'bot_token', fallback=None),
             'chat_id': parser.get('telegram', 'chat_id', fallback=None)
@@ -57,12 +56,11 @@ def load_configuration(path='config.ini'):
         
         # Account Modes Szekció
         config['account_modes'] = {
-            'demo_mode': parser.get('account_modes', 'demo_mode', fallback='Hedge')
+            'mode': parser.get('account_modes', 'mode', fallback='Hedge')
         }
 
         # Settings Szekció
         sl_tiers_str = parser.get('settings', 'sl_loss_tiers_usd', fallback='10, 20, 30')
-        
         symbols_raw = parser.get('settings', 'symbolstocopy', fallback='')
         if symbols_raw.strip() == '[]':
             symbols_list = []
@@ -70,8 +68,7 @@ def load_configuration(path='config.ini'):
             symbols_list = [s.strip() for s in symbols_raw.split(',') if s.strip()]
             
         config['settings'] = {
-            'live_start_date': parser.get('settings', 'livestartdate', fallback=None),
-            'demo_start_date': parser.get('settings', 'demostartdate', fallback=None),
+            'start_date': parser.get('settings', 'startdate', fallback=None),
             'log_rotation_backup_count': parser.getint('settings', 'logrotationbackupcount', fallback=14),
             'loop_interval': parser.getint('settings', 'loopintervalseconds', fallback=120),
             'symbols_to_copy': symbols_list,
@@ -84,7 +81,7 @@ def load_configuration(path='config.ini'):
         }
         
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError) as e:
-        logger.critical(f"Konfigurációs hiba a(z) {path} fájlban. Hiba: {e}", exc_info=True)
+        logger.critical(f"Konfigurációs hiba a(z) {config_path} fájlban. Hiba: {e}", exc_info=True)
         return None
 
     logger.info("Konfiguráció sikeresen betöltve.")
