@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from .api_handler import make_api_request, get_data
+from modules.logger_setup import send_admin_alert
 
 logger = logging.getLogger()
 
@@ -32,7 +33,9 @@ class ReportingManager:
     def _save_json(self, file_path, data):
         try:
             with open(file_path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4, ensure_ascii=False)
-        except IOError as e: logger.error(f"Hiba a(z) {file_path} írása közben: {e}")
+        except IOError as e:
+            logger.error(f"Hiba a(z) {file_path} írása közben: {e}")
+            send_admin_alert(f"Hiba a(z) {file_path} írása közben: {e}")
 
     def _update_chart_data(self, account_data):
         """Hozzáadja az aktuális egyenleg adatpontot a megfelelő chart fájlhoz."""
@@ -61,6 +64,7 @@ class ReportingManager:
 
         except Exception as e:
             logger.error(f"Hiba a chart adatok frissítése közben ({file_path.name}): {e}", exc_info=True)
+            send_admin_alert(f"Hiba a chart adatok frissítése közben ({file_path.name}): {e}")
 
     def update_activity_log(self, activity_type="copy"):
         """Frissíti az aktivitási naplót (utolsó másolás, indulás ideje)."""
@@ -214,35 +218,39 @@ class ReportingManager:
         
     def get_pnl_update_after_close(self, api, symbol):
         """
-        Lekérdezi a legutóbbi zárt PnL-t és a teljes napi PnL-t.
-        Újrapróbálkozási logikát tartalmaz a megbízhatóság növelése érdekében.
+        Lekérdezi a legutóbbi zárt PnL-t és a teljes napi PnL-t, pontos 7 napos ciklusokkal, lapozással, a configból vett start dátum figyelembevételével.
         """
+        from datetime import datetime, timezone, timedelta
         closed_pnl = None
-        
-        for i in range(4): # Max 4 próbálkozás
-            try:
-                start_ms_trade = int((datetime.now(timezone.utc) - timedelta(minutes=15)).timestamp() * 1000)
-                pnl_history_trade = get_data(api, "/v5/position/closed-pnl", {'category': 'linear', 'symbol': symbol, 'startTime': start_ms_trade, 'limit': 1})
-                if pnl_history_trade and pnl_history_trade.get('list'):
-                    closed_pnl = float(pnl_history_trade['list'][0].get('closedPnl', 0))
-                    logger.info(f"A legutóbbi trade PnL-je sikeresen lekérdezve: {closed_pnl}")
-                    break 
-                else:
-                    logger.warning(f"Zárt PnL adat még nem elérhető a(z) {symbol} szimbólumra. ({i+1}. próba)")
-                    time.sleep(i * 2 + 1) # Növekvő várakozási idő (1, 3, 5 mp)
-            except Exception as e:
-                logger.error(f"Hiba a PnL lekérdezése közben: {e}", exc_info=True)
-                time.sleep(2)
-        
-        if closed_pnl is None:
-            logger.error(f"A PnL adatot több próbálkozás után sem sikerült lekérdezni a(z) {symbol} szimbólumra.")
-            
-        try:
-            start_ms_daily = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
-            pnl_history_daily_data = get_data(api, "/v5/position/closed-pnl", {'category': 'linear', 'startTime': start_ms_daily})
-            daily_pnl = sum(float(p.get('closedPnl', 0)) for p in pnl_history_daily_data.get('list', [])) if pnl_history_daily_data else 0.0
-        except Exception:
-            logger.error("Hiba a napi PnL lekérdezése közben.", exc_info=True)
+        daily_pnl = 0.0
+        now_utc = datetime.now(timezone.utc)
+        # Start dátum a configból
+        start_date_str = self.config['settings'].get('demo_start_date') if api.get('is_demo') else self.config['settings'].get('live_start_date')
+        start_time_ms = None
+        if start_date_str:
+            start_time_dt = None
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+                try:
+                    start_time_dt = datetime.strptime(start_date_str.strip(), fmt)
+                    break
+                except ValueError:
+                    pass
+            if start_time_dt:
+                start_time_ms = int(start_time_dt.timestamp() * 1000)
+        fetch_params = {'category': 'linear', 'symbol': symbol}
+        if start_time_ms:
+            fetch_params['startTime'] = start_time_ms
+        # 7 napos ciklusokkal, lapozva lekérjük a teljes zárt trade történetet
+        pnl_history = self._fetch_history_in_chunks(api, "/v5/position/closed-pnl", **fetch_params)
+        # Legutóbbi zárt trade PnL-je
+        if pnl_history:
+            # Legutóbbi trade (legnagyobb createdTime)
+            last_trade = max(pnl_history, key=lambda x: int(x.get('createdTime', 0)))
+            closed_pnl = float(last_trade.get('closedPnl', 0))
+            # Napi PnL számítása (csak a mai napra)
+            today_utc = now_utc.date()
+            daily_pnl = sum(float(entry.get('closedPnl', 0)) for entry in pnl_history if datetime.fromtimestamp(int(entry['createdTime']) / 1000, tz=timezone.utc).date() == today_utc)
+        else:
+            closed_pnl = None
             daily_pnl = 0.0
-            
         return closed_pnl, daily_pnl
