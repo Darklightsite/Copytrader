@@ -5,6 +5,8 @@ import multiprocessing
 import os
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from modules.config_loader import get_all_users, is_admin
+from modules.telegram_sender import send_telegram_message
 
 class CustomColorFormatter(logging.Formatter):
     """
@@ -43,6 +45,23 @@ class CustomColorFormatter(logging.Formatter):
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
 
+class AdminNotificationHandler(logging.Handler):
+    """
+    Egyedi log handler, amely minden ERROR/CRITICAL logot elküld az admin(ok) Telegramjára.
+    """
+    def __init__(self, bot_token, users_json_path='data/users.json'):
+        super().__init__(level=logging.ERROR)
+        self.bot_token = bot_token
+        self.admin_ids = [user['telegram_id'] for user in get_all_users(users_json_path) if is_admin(user)]
+
+    def emit(self, record):
+        if record.levelno >= logging.ERROR:
+            msg = self.format(record)
+            for admin_id in self.admin_ids:
+                try:
+                    send_telegram_message(self.bot_token, admin_id, f"[HIBA] {msg}")
+                except Exception as e:
+                    print(f"Nem sikerült adminnak hibát küldeni Telegramon: {e}")
 
 def setup_logging(cfg, log_dir: Path):
     """
@@ -104,5 +123,13 @@ def setup_logging(cfg, log_dir: Path):
     ]
     for lib_name in third_party_loggers:
         logging.getLogger(lib_name).setLevel(logging.WARNING)
+
+    # A végén admin értesítő handler hozzáadása
+    bot_token = cfg.get('telegram', {}).get('bot_token')
+    if bot_token:
+        admin_handler = AdminNotificationHandler(bot_token)
+        admin_handler.setLevel(logging.ERROR)
+        admin_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(admin_handler)
 
     logger.info(f"Naplózás beállítva a(z) '{process_name}' processz számára. Szint: {log_level_str.upper()}. Fájl: {log_file_path}")
