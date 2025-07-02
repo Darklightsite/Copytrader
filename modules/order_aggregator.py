@@ -3,6 +3,7 @@
 import time
 from decimal import Decimal
 import logging
+from modules.logger_setup import send_admin_alert
 
 logger = logging.getLogger()
 
@@ -29,24 +30,30 @@ class OrderAggregator:
         """
         Hozzáad egy új kötést (fill) az aggregálandó megbízásokhoz.
         """
-        symbol = fill_data['symbol']
-        side = fill_data['side']
-        action = fill_data['action']
-        qty = Decimal(fill_data['qty'])
-        
-        agg_key = f"{symbol}-{side}-{action}"
-
-        if agg_key not in self.pending_orders:
-            self.pending_orders[agg_key] = {
-                'total_qty': Decimal('0'),
-                'timestamp': time.time(),
-                'is_increase': fill_data.get('is_increase', False),
-                'position_side_for_close': fill_data.get('position_side_for_close')
-            }
-            logger.info(f"Új aggregációs kulcs létrehozva: {agg_key}")
-
-        self.pending_orders[agg_key]['total_qty'] += qty
-        logger.info(f"Fill hozzáadva az aggregátorhoz: {agg_key}, Mennyiség: {qty}. Új teljes mennyiség: {self.pending_orders[agg_key]['total_qty']:.4f}")
+        try:
+            symbol = fill_data['symbol']
+            side = fill_data['side']
+            action = fill_data['action']
+            try:
+                qty = Decimal(fill_data['qty'])
+            except Exception as e:
+                logger.error(f"Hibás mennyiség (qty) a fill-ben: {fill_data.get('qty')}, hiba: {e}")
+                send_admin_alert(f"Hibás mennyiség (qty) a fill-ben: {fill_data.get('qty')}, hiba: {e}", user=None, account=f"{symbol}-{side}-{action}")
+                return
+            agg_key = f"{symbol}-{side}-{action}"
+            if agg_key not in self.pending_orders:
+                self.pending_orders[agg_key] = {
+                    'total_qty': Decimal('0'),
+                    'timestamp': time.time(),
+                    'is_increase': fill_data.get('is_increase', False),
+                    'position_side_for_close': fill_data.get('position_side_for_close')
+                }
+                logger.info(f"Új aggregációs kulcs létrehozva: {agg_key}")
+            self.pending_orders[agg_key]['total_qty'] += qty
+            logger.info(f"Fill hozzáadva az aggregátorhoz: {agg_key}, Mennyiség: {qty}. Új teljes mennyiség: {self.pending_orders[agg_key]['total_qty']:.4f}")
+        except Exception as e:
+            logger.error(f"Hiba a fill hozzáadásakor: {e}, fill_data: {fill_data}")
+            send_admin_alert(f"Hiba a fill hozzáadásakor: {e}, fill_data: {fill_data}", user=None, account=fill_data.get('symbol'))
 
     def get_ready_orders(self):
         """
