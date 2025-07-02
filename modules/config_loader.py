@@ -3,6 +3,7 @@
 import configparser
 import logging
 import os
+import json
 
 logger = logging.getLogger()
 
@@ -86,3 +87,28 @@ def load_configuration(nickname, path=None):
 
     logger.info("Konfiguráció sikeresen betöltve.")
     return config
+
+def get_all_users(users_json_path='data/users.json'):
+    """
+    Beolvassa a központi users.json-t, visszaadja az összes felhasználó adatait,
+    és automatikusan létrehozza a hiányzó user mappákat.
+    """
+    users = []
+    try:
+        with open(users_json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            users = data.get('users', [])
+    except Exception as e:
+        logger.critical(f"Nem sikerült beolvasni a users.json-t: {e}")
+        return []
+
+    # Mappák automatikus létrehozása
+    for user in users:
+        nickname = user.get('nickname')
+        if nickname:
+            user_dir = os.path.join('data', 'users', nickname)
+            os.makedirs(user_dir, exist_ok=True)
+            # Alap log és snapshot mappák
+            os.makedirs(os.path.join(user_dir, 'logs'), exist_ok=True)
+            os.makedirs(os.path.join(user_dir, 'snapshots'), exist_ok=True)
+    return users
